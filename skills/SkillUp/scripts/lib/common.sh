@@ -531,6 +531,8 @@ run_status() {
     IFS=','
   done
   IFS=$OLD_IFS
+
+  print_status_summary "$skill_dir" "$local_version"
 }
 
 validate_skill_dir() {
@@ -869,6 +871,54 @@ status_platform() {
       record_result "$platform" "$skill_dir" "skipped" "unknown platform"
       ;;
   esac
+}
+
+print_status_summary() {
+  skill_dir=$1
+  local_version=$2
+  summary=$(SKILLUP_RESULTS_DATA=$SKILLUP_RESULTS python3 - "$skill_dir" "$local_version" <<'PY'
+import os
+import sys
+
+skill_dir = sys.argv[1]
+local_version = sys.argv[2]
+rows = []
+for line in os.environ.get("SKILLUP_RESULTS_DATA", "").splitlines():
+    if not line.strip():
+        continue
+    parts = line.split("|")
+    parts += [""] * (8 - len(parts))
+    if parts[1] != skill_dir:
+        continue
+    rows.append(parts)
+
+parts_out = []
+for platform, _, status, _, _, _, version, _ in rows:
+    if platform == "github":
+        parts_out.append("GitHub已同步" if status == "in-sync" else "GitHub未同步")
+    elif platform == "xiaping":
+        parts_out.append("虾评已同步" if status == "in-sync" else "虾评未同步")
+    elif platform == "openclaw":
+        if status == "in-sync":
+            parts_out.append("OpenClaw 中文社区已同步")
+        elif status == "status-review":
+            parts_out.append("OpenClaw 中文社区待确认")
+        else:
+            parts_out.append("OpenClaw 中文社区未同步")
+    elif platform == "clawhub":
+        if status == "in-sync":
+            parts_out.append("ClawHub已同步")
+        elif status == "out-of-sync":
+            parts_out.append("ClawHub未发布")
+        else:
+            parts_out.append("ClawHub待确认")
+
+summary = "，".join(parts_out) if parts_out else f"本地版本 {local_version}"
+print(summary)
+PY
+)
+  record_result "status-summary" "$skill_dir" "summary" "$summary" "" "$(skill_slug "$skill_dir")" "$local_version" ""
+  printf '[status-summary] %s\n' "$summary"
 }
 
 print_summary() {
