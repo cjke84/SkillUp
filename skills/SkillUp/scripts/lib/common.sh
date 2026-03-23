@@ -6,17 +6,34 @@ SKILLUP_ROOT=${SKILLUP_ROOT:-$(CDPATH= cd -- "$(dirname "$0")/.." && pwd)}
 SKILLUP_DEFAULT_CONFIG="$SKILLUP_ROOT/config.example.toml"
 SKILLUP_DEFAULT_ARTIFACT_DIR="$SKILLUP_ROOT/.skillup-artifacts"
 SKILLUP_RESULTS=""
+SKILLUP_FAIL_FAST=0
+SKILLUP_RETRY_COUNT=0
+SKILLUP_MODE="publish"
+SKILLUP_RESULT_FILE=""
+SKILLUP_FAILED=0
+SKILLUP_CONTINUE_ON_ERROR=1
 
 usage() {
   cat <<'EOF'
-Usage: publish.sh --source <path> [options]
+Usage: publish.sh [publish|check|package] --source <path> [options]
+
+Modes:
+  publish                Validate, package, and publish skills (default)
+  check                  Validate skills and platform requirements only
+  package                Validate and package skills without publishing
 
 Options:
   --source <path>        Single skill directory or repository root
   --platforms <csv>      github,xiaping,openclaw,clawhub
   --config <path>        Config file path
   --artifact-dir <path>  Artifact output directory
+  --result-file <path>   JSON result file path
   --dry-run              Validate and package without remote publishing
+  --fail-fast            Stop after the first failure
+  --continue-on-error    Continue processing after failures
+  --retry <n>            Retry failed publishes up to n additional times
+  --only-validate        Alias for check mode
+  --only-package         Alias for package mode
   --help                 Show this message
 EOF
 }
@@ -27,6 +44,15 @@ main() {
   CONFIG_PATH=""
   ARTIFACT_DIR=""
   DRY_RUN=0
+
+  if [ "$#" -gt 0 ]; then
+    case "$1" in
+      publish|check|package)
+        SKILLUP_MODE=$1
+        shift
+        ;;
+    esac
+  fi
 
   while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -46,8 +72,34 @@ main() {
         ARTIFACT_DIR=$2
         shift 2
         ;;
+      --result-file)
+        SKILLUP_RESULT_FILE=$2
+        shift 2
+        ;;
       --dry-run)
         DRY_RUN=1
+        shift
+        ;;
+      --fail-fast)
+        SKILLUP_FAIL_FAST=1
+        SKILLUP_CONTINUE_ON_ERROR=0
+        shift
+        ;;
+      --continue-on-error)
+        SKILLUP_FAIL_FAST=0
+        SKILLUP_CONTINUE_ON_ERROR=1
+        shift
+        ;;
+      --retry)
+        SKILLUP_RETRY_COUNT=$2
+        shift 2
+        ;;
+      --only-validate)
+        SKILLUP_MODE="check"
+        shift
+        ;;
+      --only-package)
+        SKILLUP_MODE="package"
         shift
         ;;
       --help)
@@ -85,8 +137,12 @@ main() {
     ARTIFACT_DIR=$(config_get "$CONFIG_PATH" defaults artifact_dir "$SKILLUP_DEFAULT_ARTIFACT_DIR")
   fi
   ARTIFACT_DIR=$(resolve_path "$ARTIFACT_DIR" "$SKILLUP_ROOT")
-
   mkdir -p "$ARTIFACT_DIR"
+
+  if [ -z "$SKILLUP_RESULT_FILE" ]; then
+    SKILLUP_RESULT_FILE=$(config_get "$CONFIG_PATH" defaults result_file "$ARTIFACT_DIR/publish-result.json")
+  fi
+  SKILLUP_RESULT_FILE=$(resolve_path "$SKILLUP_RESULT_FILE" "$SKILLUP_ROOT")
 
   SKILLS=$(discover_skills "$SOURCE")
   if [ -z "$SKILLS" ]; then
@@ -99,13 +155,23 @@ main() {
 '
   for skill_dir in $SKILLS; do
     IFS=$OLD_IFS
-    process_skill "$skill_dir" "$PLATFORMS" "$CONFIG_PATH" "$ARTIFACT_DIR" "$DRY_RUN"
+    if ! process_skill "$skill_dir" "$PLATFORMS" "$CONFIG_PATH" "$ARTIFACT_DIR" "$DRY_RUN"; then
+      SKILLUP_FAILED=1
+      if [ "$SKILLUP_FAIL_FAST" -eq 1 ]; then
+        break
+      fi
+    fi
     IFS='
 '
   done
   IFS=$OLD_IFS
 
   print_summary
+  write_results_json "$SKILLUP_RESULT_FILE"
+
+  if [ "$SKILLUP_FAILED" -ne 0 ]; then
+    exit 1
+  fi
 }
 
 config_get() {
@@ -126,6 +192,7 @@ config_get() {
       sub(/^[^=]*=[[:space:]]*/, "", $0)
       gsub(/^[[:space:]]*"/, "", $0)
       gsub(/"[[:space:]]*$/, "", $0)
+      gsub(/\\"/, "\"", $0)
       print
       exit
     }
@@ -170,6 +237,7 @@ manifest_get() {
       sub(/^[^=]*=[[:space:]]*/, "", $0)
       gsub(/^[[:space:]]*"/, "", $0)
       gsub(/"[[:space:]]*$/, "", $0)
+      gsub(/\\"/, "\"", $0)
       print
       exit
     }
@@ -186,17 +254,31 @@ manifest_section_get() {
     return 1
   fi
 
-  awk -v target_section="[" section "]" -v target_key="$key" '
+  awk -v target_section="[$section]" -v target_key="$key" '
     BEGIN { in_section = 0 }
     /^\[[^]]+\]$/ { in_section = ($0 == target_section); next }
     in_section && $0 ~ "^[[:space:]]*" target_key "[[:space:]]*=" {
       sub(/^[^=]*=[[:space:]]*/, "", $0)
       gsub(/^[[:space:]]*"/, "", $0)
       gsub(/"[[:space:]]*$/, "", $0)
+      gsub(/\\"/, "\"", $0)
       print
       exit
     }
   ' "$manifest_path"
+}
+
+manifest_section_enabled() {
+  skill_dir=$1
+  section=$2
+  raw_value=$(manifest_section_get "$skill_dir" "$section" enabled 2>/dev/null || true)
+
+  if [ -z "$raw_value" ]; then
+    printf '%s\n' "true"
+    return
+  fi
+
+  printf '%s\n' "$raw_value" | tr '[:upper:]' '[:lower:]'
 }
 
 frontmatter_get() {
@@ -256,6 +338,47 @@ skill_version() {
   printf '%s\n' "$version"
 }
 
+skill_name() {
+  skill_dir=$1
+  name=$(manifest_get "$skill_dir" name 2>/dev/null || true)
+  if [ -z "$name" ]; then
+    name=$(frontmatter_get "$skill_dir" name 2>/dev/null || true)
+  fi
+  if [ -z "$name" ]; then
+    name=$(basename "$skill_dir")
+  fi
+  printf '%s\n' "$name"
+}
+
+json_quote() {
+  python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
+}
+
+json_array_contains() {
+  json_value=$1
+  needle=$2
+  python3 - "$json_value" "$needle" <<'PY'
+import json
+import sys
+try:
+    values = json.loads(sys.argv[1])
+except Exception:
+    sys.exit(2)
+sys.exit(0 if sys.argv[2] in values else 1)
+PY
+}
+
+json_array_each() {
+  json_value=$1
+  python3 - "$json_value" <<'PY'
+import json
+import sys
+values = json.loads(sys.argv[1])
+for item in values:
+    print(item)
+PY
+}
+
 ensure_skill_version() {
   skill_dir=$1
   version=$(skill_version "$skill_dir")
@@ -273,41 +396,57 @@ validate_skill_dir() {
   }
 }
 
+validate_skill_slug() {
+  skill_dir=$1
+  slug=$(skill_slug "$skill_dir")
+  printf '%s' "$slug" | grep -E '^[a-z0-9][a-z0-9-]*$' >/dev/null 2>&1 || {
+    echo "Invalid slug '$slug' for $skill_dir" >&2
+    return 1
+  }
+}
+
+validate_skill_metadata() {
+  skill_dir=$1
+  if ! validate_skill_dir "$skill_dir"; then
+    return 1
+  fi
+  if ! ensure_skill_version "$skill_dir"; then
+    return 1
+  fi
+  if ! validate_skill_slug "$skill_dir"; then
+    return 1
+  fi
+  return 0
+}
+
 package_skill() {
   skill_dir=$1
   artifact_dir=$2
   slug=$(skill_slug "$skill_dir")
   artifact_path="$artifact_dir/$slug.zip"
   parent_dir=$(dirname "$skill_dir")
-  skill_name=$(basename "$skill_dir")
+  skill_name_local=$(basename "$skill_dir")
 
   rm -f "$artifact_path"
   (
     cd "$parent_dir"
-    zip -qr "$artifact_path" "$skill_name"
+    zip -qr "$artifact_path" "$skill_name_local"
   )
   printf '%s\n' "$artifact_path"
 }
 
-process_skill() {
-  skill_dir=$1
-  platforms_csv=$2
-  config_path=$3
-  artifact_dir=$4
-  dry_run=$5
+validate_artifact() {
+  artifact_path=$1
+  [ -f "$artifact_path" ] || {
+    echo "Artifact not found: $artifact_path" >&2
+    return 1
+  }
 
-  validate_skill_dir "$skill_dir"
-  ensure_skill_version "$skill_dir"
-  artifact_path=$(package_skill "$skill_dir" "$artifact_dir")
-
-  OLD_IFS=$IFS
-  IFS=','
-  for platform in $platforms_csv; do
-    IFS=$OLD_IFS
-    publish_one "$platform" "$skill_dir" "$artifact_path" "$config_path" "$dry_run"
-    IFS=','
-  done
-  IFS=$OLD_IFS
+  artifact_size=$(wc -c < "$artifact_path")
+  if [ "$artifact_size" -gt 52428800 ]; then
+    echo "Artifact exceeds 50MB limit: $artifact_path" >&2
+    return 1
+  fi
 }
 
 trim() {
@@ -319,7 +458,12 @@ record_result() {
   skill_dir=$2
   status=$3
   detail=$4
-  SKILLUP_RESULTS="${SKILLUP_RESULTS}${platform}|${skill_dir}|${status}|${detail}
+  url=${5:-}
+  resource_id=${6:-}
+  version=${7:-}
+  review_state=${8:-}
+
+  SKILLUP_RESULTS="${SKILLUP_RESULTS}${platform}|${skill_dir}|${status}|${detail}|${url}|${resource_id}|${version}|${review_state}
 "
 }
 
@@ -331,6 +475,183 @@ template_render() {
   printf '%s\n' "$template" | sed \
     -e "s/{slug}/$slug/g" \
     -e "s/{version}/$version/g"
+}
+
+platform_requires_command() {
+  platform=$1
+  case "$platform" in
+    github)
+      printf '%s\n' "git"
+      ;;
+    xiaping)
+      printf '%s\n' "curl"
+      ;;
+    openclaw)
+      printf '%s\n' "claw"
+      ;;
+    clawhub)
+      printf '%s\n' "clawhub"
+      ;;
+    *)
+      printf '\n'
+      ;;
+  esac
+}
+
+check_platform() {
+  platform=$1
+  skill_dir=$2
+  config_path=$3
+
+  if ! platform_enabled_for_skill "$platform" "$skill_dir"; then
+    record_result "$platform" "$skill_dir" "skipped" "platform disabled in manifest" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+    return 0
+  fi
+
+  case "$platform" in
+    github)
+      check_github "$skill_dir" "$config_path"
+      ;;
+    xiaping)
+      check_xiaping "$skill_dir" "$config_path"
+      ;;
+    openclaw)
+      check_openclaw "$skill_dir" "$config_path"
+      ;;
+    clawhub)
+      check_clawhub "$skill_dir" "$config_path"
+      ;;
+    *)
+      record_result "$platform" "$skill_dir" "skipped" "unknown platform"
+      return 0
+      ;;
+  esac
+}
+
+platform_enabled_for_skill() {
+  platform=$1
+  skill_dir=$2
+  enabled=$(manifest_section_enabled "$skill_dir" "$platform")
+
+  case "$enabled" in
+    true|1|yes|on)
+      return 0
+      ;;
+    false|0|no|off)
+      return 1
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+}
+
+check_common_platform_requirement() {
+  platform=$1
+  skill_dir=$2
+  required_command=$(platform_requires_command "$platform")
+
+  if [ -n "$required_command" ] && ! command_exists "$required_command"; then
+    record_result "$platform" "$skill_dir" "failed" "missing command: $required_command"
+    return 1
+  fi
+
+  return 0
+}
+
+run_with_retries() {
+  platform=$1
+  skill_dir=$2
+  artifact_path=$3
+  config_path=$4
+  dry_run=$5
+
+  attempt=0
+  while :; do
+    if publish_one "$platform" "$skill_dir" "$artifact_path" "$config_path" "$dry_run"; then
+      return 0
+    fi
+    if [ "$attempt" -ge "$SKILLUP_RETRY_COUNT" ]; then
+      return 1
+    fi
+    attempt=$((attempt + 1))
+  done
+}
+
+process_skill() {
+  skill_dir=$1
+  platforms_csv=$2
+  config_path=$3
+  artifact_dir=$4
+  dry_run=$5
+  skill_failed=0
+
+  if ! validate_skill_metadata "$skill_dir"; then
+    record_result "check" "$skill_dir" "failed" "skill validation failed"
+    return 1
+  fi
+
+  record_result "check" "$skill_dir" "validated" "skill metadata passed validation" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+
+  OLD_IFS=$IFS
+  IFS=','
+  for platform in $platforms_csv; do
+    IFS=$OLD_IFS
+    trimmed_platform=$(trim "$platform")
+    if [ -n "$trimmed_platform" ]; then
+      if ! check_platform "$trimmed_platform" "$skill_dir" "$config_path"; then
+        skill_failed=1
+        if [ "$SKILLUP_FAIL_FAST" -eq 1 ]; then
+          IFS=','
+          break
+        fi
+      fi
+    fi
+    IFS=','
+  done
+  IFS=$OLD_IFS
+
+  if [ "$SKILLUP_MODE" = "check" ]; then
+    [ "$skill_failed" -eq 0 ]
+    return
+  fi
+
+  artifact_path=$(package_skill "$skill_dir" "$artifact_dir")
+  if ! validate_artifact "$artifact_path"; then
+    record_result "package" "$skill_dir" "failed" "artifact validation failed" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+    return 1
+  fi
+  record_result "package" "$skill_dir" "packaged" "artifact created" "$artifact_path" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+
+  if [ "$SKILLUP_MODE" = "package" ]; then
+    [ "$skill_failed" -eq 0 ]
+    return
+  fi
+
+  OLD_IFS=$IFS
+  IFS=','
+  for platform in $platforms_csv; do
+    IFS=$OLD_IFS
+    trimmed_platform=$(trim "$platform")
+    if [ -n "$trimmed_platform" ]; then
+      if ! platform_enabled_for_skill "$trimmed_platform" "$skill_dir"; then
+        record_result "$trimmed_platform" "$skill_dir" "skipped" "platform disabled in manifest" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+        IFS=','
+        continue
+      fi
+      if ! run_with_retries "$trimmed_platform" "$skill_dir" "$artifact_path" "$config_path" "$dry_run"; then
+        skill_failed=1
+        if [ "$SKILLUP_FAIL_FAST" -eq 1 ]; then
+          IFS=','
+          break
+        fi
+      fi
+    fi
+    IFS=','
+  done
+  IFS=$OLD_IFS
+
+  [ "$skill_failed" -eq 0 ]
 }
 
 publish_one() {
@@ -355,17 +676,56 @@ publish_one() {
       publish_clawhub "$skill_dir" "$artifact_path" "$config_path" "$dry_run"
       ;;
     "")
+      return 0
       ;;
     *)
       record_result "$platform" "$skill_dir" "skipped" "unknown platform"
+      return 0
       ;;
   esac
 }
 
 print_summary() {
   printf '%s' "$SKILLUP_RESULTS" | awk -F'|' 'NF >= 4 {
-    printf "[%s] %s -> %s (%s)\n", $1, $2, $3, $4
+    extra = ""
+    if ($5 != "") extra = " " $5
+    printf "[%s] %s -> %s (%s)%s\n", $1, $2, $3, $4, extra
   }'
+}
+
+write_results_json() {
+  result_file=$1
+  result_dir=$(dirname "$result_file")
+  mkdir -p "$result_dir"
+
+  SKILLUP_RESULTS_DATA=$SKILLUP_RESULTS python3 - "$result_file" <<'PY'
+import json
+import os
+import sys
+
+rows = []
+raw = os.environ.get("SKILLUP_RESULTS_DATA", "")
+for line in raw.splitlines():
+    if not line.strip():
+        continue
+    parts = line.split("|")
+    parts.extend([""] * (8 - len(parts)))
+    rows.append(
+        {
+            "platform": parts[0],
+            "skill_dir": parts[1],
+            "status": parts[2],
+            "detail": parts[3],
+            "url": parts[4],
+            "id": parts[5],
+            "version": parts[6],
+            "review_state": parts[7],
+        }
+    )
+
+with open(sys.argv[1], "w", encoding="utf-8") as handle:
+    json.dump(rows, handle, ensure_ascii=False, indent=2)
+PY
 }
 
 env_or_config() {

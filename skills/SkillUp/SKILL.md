@@ -1,7 +1,7 @@
 ---
 name: SkillUp
-description: Use when publishing one skill or a repository of skills to GitHub, Xiaping Skill, OpenClaw 中文社区, or ClawHub with environment-first credentials and non-browser automation
-version: 0.1.0
+description: 当你要把一个技能目录或技能仓库发布到 GitHub、虾评 Skill、OpenClaw 中文社区或 ClawHub，并希望优先使用环境变量和非浏览器自动化时使用
+version: 0.1.1
 metadata:
   openclaw:
     requires:
@@ -48,7 +48,7 @@ Do not use this skill when:
 The entrypoint is:
 
 ```bash
-./skills/SkillUp/scripts/publish.sh --source <path> [options]
+./skills/SkillUp/scripts/publish.sh [publish|check|package] --source <path> [options]
 ```
 
 Common options:
@@ -57,7 +57,17 @@ Common options:
 - `--platforms <csv>`: `github,xiaping,openclaw,clawhub`
 - `--config <path>`: path to a local TOML-like config file
 - `--artifact-dir <path>`: where packaged zip files are written
+- `--result-file <path>`: where structured JSON results are written
 - `--dry-run`: validate and package without external publishing
+- `--fail-fast`: stop at the first failure
+- `--continue-on-error`: keep going after failures
+- `--retry <n>`: retry failed publishes
+
+Modes:
+
+- `check`: validate metadata, command availability, and platform-specific requirements
+- `package`: validate and produce artifacts without remote publishing
+- `publish`: validate, package, and publish
 
 ## Credential Priority
 
@@ -86,6 +96,11 @@ Optional per-skill metadata may live in:
 
 A repository source may contain multiple child directories, each with its own `SKILL.md`.
 
+Platform switches:
+
+- Set `[github].enabled = false` or the equivalent platform section in `manifest.toml` to skip publishing that platform
+- Combine manifest switches with `--platforms <csv>` to control both the allowed set and the enabled set
+
 ## Publish Flow
 
 1. Discover skills from the provided source path
@@ -93,6 +108,7 @@ A repository source may contain multiple child directories, each with its own `S
 3. Package each skill into a zip artifact
 4. Attempt publishing for each requested platform
 5. Print a concise summary of success, skipped items, and failures
+6. Write machine-readable results to `publish-result.json`
 
 ## Examples
 
@@ -100,9 +116,19 @@ Publish a single skill in dry-run mode:
 
 ```bash
 ./skills/SkillUp/scripts/publish.sh \
+  publish \
   --source ./skills/SkillUp \
   --platforms github,xiaping,openclaw,clawhub \
   --dry-run
+```
+
+Run validation only:
+
+```bash
+./skills/SkillUp/scripts/publish.sh \
+  check \
+  --source ./skills/SkillUp \
+  --result-file ./skills/SkillUp/.skillup-artifacts/check-result.json
 ```
 
 Publish a whole skills repository with a config file:
@@ -116,6 +142,9 @@ Publish a whole skills repository with a config file:
 ## Notes
 
 - GitHub publishing can copy packaged output into a target repository and commit it through `git`
+- GitHub publishing can auto-create the configured repository and create/update releases through `gh`
 - Xiaping publishing uses its HTTP API when `SKILLUP_XIAPING_API_KEY` or a config fallback is available
+- Xiaping category values are validated against the live category API when possible
 - ClawHub publishing prefers the official `clawhub` CLI, then falls back to a configured HTTP endpoint
 - OpenClaw 中文社区 publishing prefers the `claw` community CLI, then falls back to a configured HTTP endpoint
+- ClawHub server-side trigger failures are classified separately so agents can distinguish platform bugs from local packaging problems

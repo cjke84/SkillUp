@@ -1,5 +1,17 @@
 #!/bin/sh
 
+check_clawhub() {
+  skill_dir=$1
+  config_path=$2
+
+  if ! check_common_platform_requirement "clawhub" "$skill_dir"; then
+    return 1
+  fi
+
+  record_result "clawhub" "$skill_dir" "validated" "ClawHub publish command is available"
+  return 0
+}
+
 publish_clawhub() {
   skill_dir=$1
   artifact_path=$2
@@ -34,14 +46,19 @@ publish_clawhub() {
     fi
 
     if "$cli_bin" publish "$skill_dir" --version "$version" --site "$site_url" --registry "$registry_url" --no-input >/tmp/skillup-clawhub-cli.log 2>&1; then
-      record_result "clawhub" "$skill_dir" "published" "published through $cli_bin publish"
+      record_result "clawhub" "$skill_dir" "published" "published through $cli_bin publish" "https://clawhub.ai/skills/$(skill_slug "$skill_dir")" "$(skill_slug "$skill_dir")" "$version" ""
       return
     fi
   fi
 
   if [ -z "$base_url" ] || [ -z "$upload_path" ]; then
     if command_exists "$cli_bin"; then
-      record_result "clawhub" "$skill_dir" "failed" "clawhub CLI publish failed and no endpoint is configured"
+      if grep -F "multiple paginated queries" /tmp/skillup-clawhub-cli.log >/dev/null 2>&1; then
+        record_result "clawhub" "$skill_dir" "failed_platform_bug" "ClawHub server bug while creating publisher/search digests"
+      else
+        record_result "clawhub" "$skill_dir" "failed" "clawhub CLI publish failed and no endpoint is configured"
+      fi
+      return 1
     else
       record_result "clawhub" "$skill_dir" "skipped" "endpoint not configured; artifact ready at $artifact_path"
     fi
@@ -63,5 +80,8 @@ publish_clawhub() {
     record_result "clawhub" "$skill_dir" "published" "upload accepted by $base_url$upload_path"
   else
     record_result "clawhub" "$skill_dir" "failed" "HTTP $http_code from $base_url$upload_path"
+    return 1
   fi
+
+  return 0
 }

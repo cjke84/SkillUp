@@ -1,5 +1,17 @@
 #!/bin/sh
 
+check_openclaw() {
+  skill_dir=$1
+  config_path=$2
+
+  if ! check_common_platform_requirement "openclaw" "$skill_dir"; then
+    return 1
+  fi
+
+  record_result "openclaw" "$skill_dir" "validated" "OpenClaw 中文社区 publish command is available"
+  return 0
+}
+
 publish_openclaw() {
   skill_dir=$1
   artifact_path=$2
@@ -29,12 +41,48 @@ publish_openclaw() {
 
     if [ -n "$publish_args" ]; then
       if (cd "$skill_dir" && "$cli_bin" skill publish $publish_args >/tmp/skillup-openclaw-cli.log 2>&1); then
-        record_result "openclaw" "$skill_dir" "published" "published through $cli_bin skill publish"
+        publish_id=$(python3 - <<'PY'
+import re
+try:
+    text = open('/tmp/skillup-openclaw-cli.log', 'r', encoding='utf-8').read()
+except Exception:
+    text = ''
+match = re.search(r'Skill published:\s*([^\s(]+)', text)
+print(match.group(1) if match else '')
+PY
+)
+        review_state=$(python3 - <<'PY'
+try:
+    text = open('/tmp/skillup-openclaw-cli.log', 'r', encoding='utf-8').read().lower()
+except Exception:
+    text = ''
+print('pending_review' if 'pending review' in text else '')
+PY
+)
+        record_result "openclaw" "$skill_dir" "published" "published through $cli_bin skill publish" "" "$publish_id" "$(skill_version "$skill_dir")" "$review_state"
         return
       fi
     else
       if (cd "$skill_dir" && "$cli_bin" skill publish >/tmp/skillup-openclaw-cli.log 2>&1); then
-        record_result "openclaw" "$skill_dir" "published" "published through $cli_bin skill publish"
+        publish_id=$(python3 - <<'PY'
+import re
+try:
+    text = open('/tmp/skillup-openclaw-cli.log', 'r', encoding='utf-8').read()
+except Exception:
+    text = ''
+match = re.search(r'Skill published:\s*([^\s(]+)', text)
+print(match.group(1) if match else '')
+PY
+)
+        review_state=$(python3 - <<'PY'
+try:
+    text = open('/tmp/skillup-openclaw-cli.log', 'r', encoding='utf-8').read().lower()
+except Exception:
+    text = ''
+print('pending_review' if 'pending review' in text else '')
+PY
+)
+        record_result "openclaw" "$skill_dir" "published" "published through $cli_bin skill publish" "" "$publish_id" "$(skill_version "$skill_dir")" "$review_state"
         return
       fi
     fi
@@ -43,6 +91,7 @@ publish_openclaw() {
   if [ -z "$base_url" ] || [ -z "$upload_path" ]; then
     if command_exists "$cli_bin"; then
       record_result "openclaw" "$skill_dir" "failed" "community CLI publish failed and no endpoint is configured"
+      return 1
     else
       record_result "openclaw" "$skill_dir" "skipped" "endpoint not configured; artifact ready at $artifact_path"
     fi
@@ -69,5 +118,8 @@ publish_openclaw() {
     record_result "openclaw" "$skill_dir" "published" "upload accepted by $base_url$upload_path"
   else
     record_result "openclaw" "$skill_dir" "failed" "HTTP $http_code from $base_url$upload_path"
+    return 1
   fi
+
+  return 0
 }

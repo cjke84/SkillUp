@@ -1,5 +1,31 @@
 #!/bin/sh
 
+check_github() {
+  skill_dir=$1
+  config_path=$2
+
+  if ! check_common_platform_requirement "github" "$skill_dir"; then
+    return 1
+  fi
+
+  repo_name=$(config_get "$config_path" github repo "")
+  repo_path=$(config_get "$config_path" github target_repo_path "")
+  create_release=$(config_get "$config_path" github create_release "false")
+
+  if [ -n "$repo_path" ] && [ ! -d "$repo_path/.git" ]; then
+    record_result "github" "$skill_dir" "failed" "target_repo_path is not a git repository"
+    return 1
+  fi
+
+  if [ "$create_release" = "true" ] && [ -z "$repo_name" ]; then
+    record_result "github" "$skill_dir" "failed" "github.repo is required when create_release=true"
+    return 1
+  fi
+
+  record_result "github" "$skill_dir" "validated" "GitHub publish configuration looks valid"
+  return 0
+}
+
 publish_github() {
   skill_dir=$1
   artifact_path=$2
@@ -12,6 +38,8 @@ publish_github() {
   target_subdir=$(config_get "$config_path" github target_subdir "published-skills")
   branch=$(config_get "$config_path" github branch "main")
   commit_message=$(config_get "$config_path" github commit_message "chore: sync skills via SkillUp")
+  visibility=$(config_get "$config_path" github visibility "public")
+  auto_create_repo=$(config_get "$config_path" github auto_create_repo "true")
   create_release=$(config_get "$config_path" github create_release "false")
   release_latest=$(config_get "$config_path" github release_latest "true")
   release_title_template=$(config_get "$config_path" github release_title_template "{slug} v{version}")
@@ -36,6 +64,20 @@ publish_github() {
     export GH_TOKEN
   fi
 
+  if [ -n "$repo_name" ] && command_exists gh; then
+    if ! gh repo view "$repo_name" >/dev/null 2>&1; then
+      if [ "$auto_create_repo" = "true" ]; then
+        if ! gh repo create "$repo_name" "--$visibility" >/tmp/skillup-gh-repo-create.log 2>&1; then
+          record_result "github" "$skill_dir" "failed" "gh repo create failed"
+          return 1
+        fi
+      else
+        record_result "github" "$skill_dir" "failed" "target GitHub repository does not exist"
+        return 1
+      fi
+    fi
+  fi
+
   if [ -n "$repo_path" ] && [ -d "$repo_path/.git" ]; then
     mkdir -p "$repo_path/$target_subdir"
     cp "$artifact_path" "$repo_path/$target_subdir/$slug.zip"
@@ -53,19 +95,22 @@ publish_github() {
 
     case "$status" in
       0)
-        record_result "github" "$skill_dir" "published" "artifact pushed to $repo_path/$target_subdir/$slug.zip"
+        record_result "github" "$skill_dir" "published" "artifact pushed to $repo_path/$target_subdir/$slug.zip" "" "$slug" "$version" ""
         ;;
       10)
         record_result "github" "$skill_dir" "skipped" "no repository changes"
         ;;
       11)
         record_result "github" "$skill_dir" "failed" "git commit failed"
+        return 1
         ;;
       12)
         record_result "github" "$skill_dir" "failed" "git push failed"
+        return 1
         ;;
       *)
         record_result "github" "$skill_dir" "failed" "unknown git publishing error"
+        return 1
         ;;
     esac
   elif [ "$create_release" != "true" ] || [ -z "$repo_name" ]; then
@@ -81,19 +126,23 @@ publish_github() {
     if command -v gh >/dev/null 2>&1; then
       if gh release view "$tag" --repo "$repo_name" >/dev/null 2>&1; then
         if gh release upload "$tag" "$artifact_path" --repo "$repo_name" --clobber >/tmp/skillup-gh-release.log 2>&1; then
-          record_result "github-release" "$skill_dir" "published" "updated release $tag in $repo_name"
+          record_result "github-release" "$skill_dir" "published" "updated release $tag in $repo_name" "https://github.com/$repo_name/releases/tag/$tag" "$tag" "$version" ""
         else
           record_result "github-release" "$skill_dir" "failed" "gh release upload failed"
+          return 1
         fi
       else
         if gh release create "$tag" "$artifact_path" --repo "$repo_name" --title "$release_title" --notes "$release_notes" $release_args >/tmp/skillup-gh-release.log 2>&1; then
-          record_result "github-release" "$skill_dir" "published" "created release $tag in $repo_name"
+          record_result "github-release" "$skill_dir" "published" "created release $tag in $repo_name" "https://github.com/$repo_name/releases/tag/$tag" "$tag" "$version" ""
         else
           record_result "github-release" "$skill_dir" "failed" "gh release create failed"
+          return 1
         fi
       fi
     else
       record_result "github-release" "$skill_dir" "skipped" "gh CLI not installed"
     fi
   fi
+
+  return 0
 }

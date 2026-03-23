@@ -1,5 +1,40 @@
 #!/bin/sh
 
+check_xiaping() {
+  skill_dir=$1
+  config_path=$2
+
+  if ! check_common_platform_requirement "xiaping" "$skill_dir"; then
+    return 1
+  fi
+
+  category=$(manifest_section_get "$skill_dir" xiaping category 2>/dev/null || true)
+  if [ -z "$category" ]; then
+    category='["开发辅助"]'
+  fi
+
+  allowed_categories=$(curl -sS 'https://xiaping.coze.site/api/categories' 2>/dev/null || true)
+  if [ -n "$allowed_categories" ]; then
+    valid_category_json=$(python3 - "$allowed_categories" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+print(json.dumps(payload.get("data", []), ensure_ascii=False))
+PY
+)
+
+    for item in $(json_array_each "$category"); do
+      if ! json_array_contains "$valid_category_json" "$item"; then
+        record_result "xiaping" "$skill_dir" "failed" "invalid Xiaping category: $item"
+        return 1
+      fi
+    done
+  fi
+
+  record_result "xiaping" "$skill_dir" "validated" "Xiaping metadata looks valid"
+  return 0
+}
+
 publish_xiaping() {
   skill_dir=$1
   artifact_path=$2
@@ -59,8 +94,41 @@ publish_xiaping() {
     -F "file=@$artifact_path")
 
   if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
-    record_result "xiaping" "$skill_dir" "published" "upload accepted by $base_url$upload_path"
+    skill_id=$(python3 - <<'PY'
+import json
+try:
+    with open('/tmp/skillup-xiaping-response.json', 'r', encoding='utf-8') as handle:
+        payload = json.load(handle)
+    print(payload.get('data', {}).get('skill', {}).get('id', ''))
+except Exception:
+    print('')
+PY
+)
+    share_url=$(python3 - <<'PY'
+import json
+try:
+    with open('/tmp/skillup-xiaping-response.json', 'r', encoding='utf-8') as handle:
+        payload = json.load(handle)
+    print(payload.get('data', {}).get('message', {}).get('share_url', ''))
+except Exception:
+    print('')
+PY
+)
+    review_state=$(python3 - <<'PY'
+import json
+try:
+    with open('/tmp/skillup-xiaping-response.json', 'r', encoding='utf-8') as handle:
+        payload = json.load(handle)
+    print(payload.get('data', {}).get('message', {}).get('status', {}).get('current', ''))
+except Exception:
+    print('')
+PY
+)
+    record_result "xiaping" "$skill_dir" "published" "upload accepted by $base_url$upload_path" "$share_url" "$skill_id" "$version" "$review_state"
   else
     record_result "xiaping" "$skill_dir" "failed" "HTTP $http_code from $base_url$upload_path"
+    return 1
   fi
+
+  return 0
 }
