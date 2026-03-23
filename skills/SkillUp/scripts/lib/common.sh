@@ -176,6 +176,29 @@ manifest_get() {
   ' "$manifest_path"
 }
 
+manifest_section_get() {
+  skill_dir=$1
+  section=$2
+  key=$3
+  manifest_path="$skill_dir/manifest.toml"
+
+  if [ ! -f "$manifest_path" ]; then
+    return 1
+  fi
+
+  awk -v target_section="[" section "]" -v target_key="$key" '
+    BEGIN { in_section = 0 }
+    /^\[[^]]+\]$/ { in_section = ($0 == target_section); next }
+    in_section && $0 ~ "^[[:space:]]*" target_key "[[:space:]]*=" {
+      sub(/^[^=]*=[[:space:]]*/, "", $0)
+      gsub(/^[[:space:]]*"/, "", $0)
+      gsub(/"[[:space:]]*$/, "", $0)
+      print
+      exit
+    }
+  ' "$manifest_path"
+}
+
 frontmatter_get() {
   skill_dir=$1
   key=$2
