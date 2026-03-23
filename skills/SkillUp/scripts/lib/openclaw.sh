@@ -12,6 +12,22 @@ check_openclaw() {
   return 0
 }
 
+status_openclaw() {
+  skill_dir=$1
+  config_path=$2
+  local_version=$3
+  _unused=$config_path
+
+  if command_exists claw; then
+    record_result "openclaw" "$skill_dir" "status-review" "OpenClaw 中文社区 requires CLI or community-side inspection for exact version status" "" "$(skill_slug "$skill_dir")" "$local_version" ""
+    printf '[openclaw] %s remote=unknown status=review\n' "$skill_dir"
+  else
+    record_result "openclaw" "$skill_dir" "status-unknown" "claw CLI unavailable" "" "$(skill_slug "$skill_dir")" "" ""
+    printf '[openclaw] %s remote=unknown\n' "$skill_dir"
+  fi
+  return 0
+}
+
 publish_openclaw() {
   skill_dir=$1
   artifact_path=$2

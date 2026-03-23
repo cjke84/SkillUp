@@ -12,15 +12,19 @@ SKILLUP_MODE="publish"
 SKILLUP_RESULT_FILE=""
 SKILLUP_FAILED=0
 SKILLUP_CONTINUE_ON_ERROR=1
+SKILLUP_BUMP_PART=""
 
 usage() {
   cat <<'EOF'
-Usage: publish.sh [publish|check|package] --source <path> [options]
+Usage: publish.sh [publish|check|package|bump|status|doctor] --source <path> [options]
 
 Modes:
   publish                Validate, package, and publish skills (default)
   check                  Validate skills and platform requirements only
   package                Validate and package skills without publishing
+  bump                   Update the skill version in SKILL.md and manifest.toml
+  status                 Show local and remote publishing status
+  doctor                 Check local environment readiness
 
 Options:
   --source <path>        Single skill directory or repository root
@@ -47,8 +51,18 @@ main() {
 
   if [ "$#" -gt 0 ]; then
     case "$1" in
-      publish|check|package)
+      publish|check|package|status|doctor)
         SKILLUP_MODE=$1
+        shift
+        ;;
+      bump)
+        SKILLUP_MODE=$1
+        shift
+        [ "$#" -gt 0 ] || {
+          echo "bump requires patch, minor, or major" >&2
+          exit 1
+        }
+        SKILLUP_BUMP_PART=$1
         shift
         ;;
     esac
@@ -388,6 +402,137 @@ ensure_skill_version() {
   fi
 }
 
+bump_version_value() {
+  current_version=$1
+  bump_part=$2
+
+  python3 - "$current_version" "$bump_part" <<'PY'
+import sys
+version = sys.argv[1]
+part = sys.argv[2]
+major, minor, patch = [int(x) for x in version.split(".")]
+if part == "patch":
+    patch += 1
+elif part == "minor":
+    minor += 1
+    patch = 0
+elif part == "major":
+    major += 1
+    minor = 0
+    patch = 0
+else:
+    raise SystemExit(1)
+print(f"{major}.{minor}.{patch}")
+PY
+}
+
+replace_version_in_skill() {
+  skill_dir=$1
+  new_version=$2
+  python3 - "$skill_dir/SKILL.md" "$new_version" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+new_version = sys.argv[2]
+text = path.read_text(encoding="utf-8")
+lines = text.splitlines()
+in_frontmatter = False
+for idx, line in enumerate(lines):
+    if idx == 0 and line == "---":
+        in_frontmatter = True
+        continue
+    if in_frontmatter and line == "---":
+        break
+    if in_frontmatter and line.startswith("version:"):
+        lines[idx] = f"version: {new_version}"
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
+replace_version_in_manifest() {
+  skill_dir=$1
+  new_version=$2
+  manifest_path="$skill_dir/manifest.toml"
+  [ -f "$manifest_path" ] || return 0
+  python3 - "$manifest_path" "$new_version" <<'PY'
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+new_version = sys.argv[2]
+lines = path.read_text(encoding="utf-8").splitlines()
+for idx, line in enumerate(lines):
+    if line.startswith("version = "):
+        lines[idx] = f'version = "{new_version}"'
+        break
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
+run_bump() {
+  skill_dir=$1
+  current_version=$(skill_version "$skill_dir")
+  [ -n "$current_version" ] || {
+    echo "Missing version metadata for $skill_dir" >&2
+    return 1
+  }
+
+  case "$SKILLUP_BUMP_PART" in
+    patch|minor|major)
+      ;;
+    *)
+      echo "bump requires patch, minor, or major" >&2
+      return 1
+      ;;
+  esac
+
+  new_version=$(bump_version_value "$current_version" "$SKILLUP_BUMP_PART")
+  replace_version_in_skill "$skill_dir" "$new_version"
+  replace_version_in_manifest "$skill_dir" "$new_version"
+  record_result "bump" "$skill_dir" "updated" "version bumped from $current_version to $new_version" "" "$(skill_slug "$skill_dir")" "$new_version" ""
+  printf '[bump] %s -> %s\n' "$current_version" "$new_version"
+  return 0
+}
+
+run_doctor() {
+  skill_dir=$1
+
+  has_git=$(command_exists git && printf yes || printf no)
+  has_gh=$(command_exists gh && printf yes || printf no)
+  has_claw=$(command_exists claw && printf yes || printf no)
+  has_clawhub=$(command_exists clawhub && printf yes || printf no)
+  has_zip=$(command_exists zip && printf yes || printf no)
+  has_python=$(command_exists python3 && printf yes || printf no)
+
+  record_result "doctor" "$skill_dir" "ok" "environment checked" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+  printf '[doctor] git=%s gh=%s claw=%s clawhub=%s zip=%s python3=%s\n' \
+    "$has_git" "$has_gh" "$has_claw" "$has_clawhub" "$has_zip" "$has_python"
+  return 0
+}
+
+run_status() {
+  skill_dir=$1
+  platforms_csv=$2
+  config_path=$3
+
+  local_version=$(skill_version "$skill_dir")
+  record_result "status" "$skill_dir" "local" "local version $local_version" "" "$(skill_slug "$skill_dir")" "$local_version" ""
+  printf '[status] %s local=%s\n' "$skill_dir" "$local_version"
+
+  OLD_IFS=$IFS
+  IFS=','
+  for platform in $platforms_csv; do
+    IFS=$OLD_IFS
+    trimmed_platform=$(trim "$platform")
+    if [ -n "$trimmed_platform" ]; then
+      if ! status_platform "$trimmed_platform" "$skill_dir" "$config_path" "$local_version"; then
+        SKILLUP_FAILED=1
+      fi
+    fi
+    IFS=','
+  done
+  IFS=$OLD_IFS
+}
+
 validate_skill_dir() {
   skill_dir=$1
   [ -f "$skill_dir/SKILL.md" ] || {
@@ -586,6 +731,22 @@ process_skill() {
   dry_run=$5
   skill_failed=0
 
+  if [ "$SKILLUP_MODE" = "bump" ]; then
+    run_bump "$skill_dir"
+    return
+  fi
+
+  if [ "$SKILLUP_MODE" = "doctor" ]; then
+    run_doctor "$skill_dir"
+    return
+  fi
+
+  if [ "$SKILLUP_MODE" = "status" ]; then
+    validate_skill_metadata "$skill_dir"
+    run_status "$skill_dir" "$platforms_csv" "$config_path"
+    return
+  fi
+
   if ! validate_skill_metadata "$skill_dir"; then
     record_result "check" "$skill_dir" "failed" "skill validation failed"
     return 1
@@ -681,6 +842,31 @@ publish_one() {
     *)
       record_result "$platform" "$skill_dir" "skipped" "unknown platform"
       return 0
+      ;;
+  esac
+}
+
+status_platform() {
+  platform=$1
+  skill_dir=$2
+  config_path=$3
+  local_version=$4
+
+  case "$platform" in
+    github)
+      status_github "$skill_dir" "$config_path" "$local_version"
+      ;;
+    xiaping)
+      status_xiaping "$skill_dir" "$config_path" "$local_version"
+      ;;
+    openclaw)
+      status_openclaw "$skill_dir" "$config_path" "$local_version"
+      ;;
+    clawhub)
+      status_clawhub "$skill_dir" "$config_path" "$local_version"
+      ;;
+    *)
+      record_result "$platform" "$skill_dir" "skipped" "unknown platform"
       ;;
   esac
 }

@@ -26,6 +26,29 @@ check_github() {
   return 0
 }
 
+status_github() {
+  skill_dir=$1
+  config_path=$2
+  local_version=$3
+  repo_name=$(config_get "$config_path" github repo "")
+
+  if [ -z "$repo_name" ] || ! command_exists gh; then
+    record_result "github" "$skill_dir" "status-unknown" "GitHub repo not configured or gh unavailable" "" "$(skill_slug "$skill_dir")" "" ""
+    printf '[github] %s remote=unknown\n' "$skill_dir"
+    return 0
+  fi
+
+  tag="skillup-v$local_version"
+  if gh release view "$tag" --repo "$repo_name" >/dev/null 2>&1; then
+    record_result "github" "$skill_dir" "in-sync" "release $tag exists" "https://github.com/$repo_name/releases/tag/$tag" "$(skill_slug "$skill_dir")" "$local_version" ""
+    printf '[github] %s remote=%s status=in-sync\n' "$skill_dir" "$local_version"
+  else
+    record_result "github" "$skill_dir" "out-of-sync" "release $tag not found" "" "$(skill_slug "$skill_dir")" "$local_version" ""
+    printf '[github] %s remote=missing status=out-of-sync\n' "$skill_dir"
+  fi
+  return 0
+}
+
 publish_github() {
   skill_dir=$1
   artifact_path=$2

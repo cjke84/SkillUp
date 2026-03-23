@@ -35,6 +35,40 @@ PY
   return 0
 }
 
+status_xiaping() {
+  skill_dir=$1
+  config_path=$2
+  local_version=$3
+
+  skill_id=$(manifest_section_get "$skill_dir" xiaping skill_id 2>/dev/null || true)
+  if [ -z "$skill_id" ]; then
+    skill_id="387c0737-5e5e-4488-990c-5c696e9603f2"
+  fi
+
+  response=$(curl -sS "https://xiaping.coze.site/api/skills/$skill_id" 2>/dev/null || true)
+  if [ -z "$response" ]; then
+    record_result "xiaping" "$skill_dir" "status-unknown" "unable to fetch Xiaping status" "" "$skill_id" "" ""
+    printf '[xiaping] %s remote=unknown\n' "$skill_dir"
+    return 0
+  fi
+
+  remote_version=$(python3 - "$response" <<'PY'
+import json
+import sys
+payload = json.loads(sys.argv[1])
+print(payload.get("data", {}).get("current_version", ""))
+PY
+)
+  if [ "$remote_version" = "$local_version" ]; then
+    record_result "xiaping" "$skill_dir" "in-sync" "Xiaping version matches local" "https://xiaping.coze.site/skill/$skill_id" "$skill_id" "$remote_version" ""
+    printf '[xiaping] %s remote=%s status=in-sync\n' "$skill_dir" "$remote_version"
+  else
+    record_result "xiaping" "$skill_dir" "out-of-sync" "Xiaping version differs from local" "https://xiaping.coze.site/skill/$skill_id" "$skill_id" "$remote_version" ""
+    printf '[xiaping] %s remote=%s status=out-of-sync\n' "$skill_dir" "$remote_version"
+  fi
+  return 0
+}
+
 publish_xiaping() {
   skill_dir=$1
   artifact_path=$2

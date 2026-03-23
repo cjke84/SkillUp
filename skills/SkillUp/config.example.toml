@@ -6,7 +6,7 @@ result_file = ".skillup-artifacts/publish-result.json"
 [github]
 token = ""
 target_repo_path = ""
-repo = ""
+repo = "cjke84/SkillUp"
 visibility = "public"
 auto_create_repo = "true"
 target_subdir = "published-skills"
