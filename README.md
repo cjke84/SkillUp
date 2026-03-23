@@ -4,7 +4,7 @@
 
 The first version in this repository focuses on:
 
-- Standard `SKILL.md` compatibility for Codex and OpenClaw-style agents
+- Standard `SKILL.md` compatibility for Codex and OpenClaw 中文社区-style agents
 - Single-skill and multi-skill repository discovery
 - Non-browser publishing flows
 - Environment-variable-first credentials with config-file fallback
@@ -12,7 +12,7 @@ The first version in this repository focuses on:
 Publishing behavior currently prefers platform-native CLIs when available:
 
 - `clawhub publish <path>` for ClawHub
-- `claw skill publish` for OpenClaw Chinese community
+- `claw skill publish` for OpenClaw 中文社区
 - HTTP API upload for Xiaping Skill
 - `git` repository sync for GitHub
 

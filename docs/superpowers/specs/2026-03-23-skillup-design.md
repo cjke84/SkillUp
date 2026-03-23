@@ -2,7 +2,7 @@
 
 ## Goal
 
-Create a reusable skill named `SkillUp` that helps Codex, OpenClaw-compatible agents, and similar assistants package and publish user-authored skills to multiple platforms without browser automation.
+Create a reusable skill named `SkillUp` that helps Codex, OpenClaw 中文社区-compatible agents, and similar assistants package and publish user-authored skills to multiple platforms without browser automation.
 
 ## Scope
 
@@ -16,7 +16,7 @@ It targets these platforms:
 - GitHub
 - ClawHub
 - Xiaping Skill
-- OpenClaw Chinese community
+- OpenClaw 中文社区
 
 ## Design
 
@@ -34,7 +34,7 @@ Execution lives in scripts inside the skill package:
 
 ## Compatibility
 
-To remain usable across Codex, OpenClaw, and other agent systems:
+To remain usable across Codex, OpenClaw 中文社区, and other agent systems:
 
 - The skill uses a standard `SKILL.md` with YAML frontmatter
 - Required inputs are plain paths and flags
@@ -50,9 +50,9 @@ Support syncing packaged skills into a target repository through `git`, with opt
 
 Use its documented API-based upload flow when an API key is available.
 
-### OpenClaw
+### OpenClaw 中文社区
 
-Prefer the OpenClaw Chinese community CLI publish flow when the `claw` command is available. Otherwise, allow API or endpoint-based upload when configured. If no publish channel is available, keep the adapter dry-run compatible and leave a clear artifact/result record.
+Prefer the OpenClaw 中文社区 CLI publish flow when the `claw` command is available. Otherwise, allow API or endpoint-based upload when configured. If no publish channel is available, keep the adapter dry-run compatible and leave a clear artifact/result record.
 
 ### ClawHub
 

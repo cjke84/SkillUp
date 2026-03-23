@@ -1,6 +1,6 @@
 ---
 name: SkillUp
-description: Use when publishing one skill or a repository of skills to GitHub, Xiaping Skill, OpenClaw, or ClawHub with environment-first credentials and non-browser automation
+description: Use when publishing one skill or a repository of skills to GitHub, Xiaping Skill, OpenClaw 中文社区, or ClawHub with environment-first credentials and non-browser automation
 version: 0.1.0
 metadata:
   openclaw:
@@ -27,7 +27,7 @@ metadata:
 
 `SkillUp` packages and publishes skills to multiple platforms through a single shell entrypoint.
 
-It is designed to stay usable across Codex, OpenClaw-compatible agents, and other agents that can read `SKILL.md` files and run shell commands.
+It is designed to stay usable across Codex, OpenClaw 中文社区-compatible agents, and other agents that can read `SKILL.md` files and run shell commands.
 
 ## When to Use
 
@@ -118,4 +118,4 @@ Publish a whole skills repository with a config file:
 - GitHub publishing can copy packaged output into a target repository and commit it through `git`
 - Xiaping publishing uses its HTTP API when `SKILLUP_XIAPING_API_KEY` or a config fallback is available
 - ClawHub publishing prefers the official `clawhub` CLI, then falls back to a configured HTTP endpoint
-- OpenClaw Chinese community publishing prefers the `claw` community CLI, then falls back to a configured HTTP endpoint
+- OpenClaw 中文社区 publishing prefers the `claw` community CLI, then falls back to a configured HTTP endpoint
