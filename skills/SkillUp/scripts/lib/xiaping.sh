@@ -93,6 +93,35 @@ publish_xiaping() {
     -F "version=$version" \
     -F "file=@$artifact_path")
 
+  if [ "$http_code" -eq 409 ]; then
+    existing_skill_id=$(python3 - <<'PY'
+import json
+try:
+    with open('/tmp/skillup-xiaping-response.json', 'r', encoding='utf-8') as handle:
+        payload = json.load(handle)
+    print(payload.get('data', {}).get('existing_skill', {}).get('id', ''))
+except Exception:
+    print('')
+PY
+)
+    if [ -n "$existing_skill_id" ]; then
+      upload_code=$(curl -sS -o /tmp/skillup-xiaping-upload-response.json -w '%{http_code}' \
+        -X POST "$base_url/api/upload" \
+        -H "Authorization: Bearer $api_key" \
+        -F "skill_id=$existing_skill_id" \
+        -F "changelog=SkillUp $version 自动更新" \
+        -F "file=@$artifact_path")
+
+      if [ "$upload_code" -ge 200 ] && [ "$upload_code" -lt 300 ]; then
+        record_result "xiaping" "$skill_dir" "published" "uploaded new version through /api/upload" "https://xiaping.coze.site/skill/$existing_skill_id" "$existing_skill_id" "$version" "trial"
+        return 0
+      fi
+
+      record_result "xiaping" "$skill_dir" "failed" "HTTP $upload_code from $base_url/api/upload"
+      return 1
+    fi
+  fi
+
   if [ "$http_code" -ge 200 ] && [ "$http_code" -lt 300 ]; then
     skill_id=$(python3 - <<'PY'
 import json

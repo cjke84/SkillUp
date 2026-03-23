@@ -17,6 +17,7 @@ publish_clawhub() {
   artifact_path=$2
   config_path=$3
   dry_run=$4
+  skill_dir_abs=$(CDPATH= cd -- "$skill_dir" && pwd)
 
   token=$(env_or_config "SKILLUP_CLAWHUB_TOKEN" "$config_path" clawhub token "")
   if [ -z "$token" ]; then
@@ -31,7 +32,7 @@ publish_clawhub() {
 
   if [ "$dry_run" -eq 1 ]; then
     if command_exists "$cli_bin"; then
-      record_result "clawhub" "$skill_dir" "dry-run" "would run $cli_bin publish $skill_dir --version $version"
+      record_result "clawhub" "$skill_dir" "dry-run" "would run $cli_bin publish $skill_dir_abs --version $version"
     else
       record_result "clawhub" "$skill_dir" "dry-run" "would publish artifact $artifact_path"
     fi
@@ -45,10 +46,19 @@ publish_clawhub() {
       "$cli_bin" login --token "$token" --site "$site_url" --registry "$registry_url" --no-input >/tmp/skillup-clawhub-login.log 2>&1 || true
     fi
 
-    if "$cli_bin" publish "$skill_dir" --version "$version" --site "$site_url" --registry "$registry_url" --no-input >/tmp/skillup-clawhub-cli.log 2>&1; then
+    if "$cli_bin" publish "$skill_dir_abs" --version "$version" --site "$site_url" --registry "$registry_url" --no-input >/tmp/skillup-clawhub-cli.log 2>&1; then
       record_result "clawhub" "$skill_dir" "published" "published through $cli_bin publish" "https://clawhub.ai/skills/$(skill_slug "$skill_dir")" "$(skill_slug "$skill_dir")" "$version" ""
       return
     fi
+  fi
+
+  if [ -z "$token" ]; then
+    if grep -F "multiple paginated queries" /tmp/skillup-clawhub-cli.log >/dev/null 2>&1; then
+      record_result "clawhub" "$skill_dir" "failed_platform_bug" "ClawHub server bug while creating publisher/search digests"
+    else
+      record_result "clawhub" "$skill_dir" "failed" "ClawHub CLI publish failed and no API token is available for HTTP fallback"
+    fi
+    return 1
   fi
 
   if [ -z "$base_url" ] || [ -z "$upload_path" ]; then
