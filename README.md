@@ -50,6 +50,11 @@
 - 支持通过 manifest 为不同平台开启或关闭发布
 - 支持发布生命周期管理和版本一致性检查
 
+如果你要把这个技能安装给智能体自己使用，建议放到默认技能目录：
+
+- Codex：`~/.codex/skills/SkillUp`
+- OpenClaw 中文社区：`~/.openclaw/skills/SkillUp`
+
 当前优先使用各平台原生能力：
 
 - ClawHub：`clawhub publish <path>`

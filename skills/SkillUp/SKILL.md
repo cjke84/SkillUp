@@ -1,7 +1,7 @@
 ---
 name: SkillUp
 description: 当你要把一个技能目录或技能仓库发布到 GitHub、虾评 Skill、OpenClaw 中文社区或 ClawHub，并希望优先使用环境变量和非浏览器自动化时使用
-version: 0.1.3
+version: 0.1.4
 metadata:
   openclaw:
     requires:
@@ -16,6 +16,9 @@ metadata:
       bins:
         - curl
         - git
+        - gh
+        - claw
+        - clawhub
     primaryEnv: SKILLUP_GITHUB_TOKEN
     skillKey: SkillUp
     homepage: https://github.com/cjke84/SkillUp
@@ -99,6 +102,11 @@ metadata:
 
 如果是 skills 仓库模式，根目录下可以包含多个子 skill 目录，每个目录都有自己的 `SKILL.md`。
 
+为了让 Codex 和 OpenClaw 中文社区都能直接发现并使用这个技能，建议安装到各自的默认技能目录之一：
+
+- `~/.codex/skills/SkillUp`
+- `~/.openclaw/skills/SkillUp`
+
 平台开关：
 
 - 在 `manifest.toml` 里设置 `[github].enabled = false` 之类的值，可以跳过某个平台
@@ -149,4 +157,5 @@ metadata:
 - 虾评分类型会在可能的情况下通过实时分类 API 做校验
 - ClawHub 优先使用官方 `clawhub` CLI，失败后再考虑 HTTP 回退
 - OpenClaw 中文社区优先使用 `claw` 社区 CLI
+- 如果你希望 OpenClaw 中文社区自动发现这个技能，请优先放在 `~/.openclaw/skills/SkillUp` 或当前 OpenClaw 工作区的 `skills/SkillUp`
 - ClawHub 的服务端 trigger 异常会被单独分类，方便区分平台 bug 和本地打包问题

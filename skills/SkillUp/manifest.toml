@@ -1,6 +1,6 @@
 name = "SkillUp"
 slug = "skillup"
-version = "0.1.3"
+version = "0.1.4"
 description = "把一个技能目录或技能仓库检查、打包并同步发布到 GitHub、虾评 Skill、OpenClaw 中文社区与 ClawHub。"
 category = "开发辅助"
 visibility = "public"

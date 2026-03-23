@@ -160,4 +160,9 @@ assert_contains "$STATUS_LOG" "[status]"
 assert_contains "$RESULT_JSON" "\"platform\": \"status\""
 assert_not_contains "$STATUS_LOG" "Unknown argument"
 
+assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
+assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"
+assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - clawhub"
+assert_contains "$ROOT_DIR/README.md" "~/.openclaw/skills/SkillUp"
+
 echo "skillup tests passed"
