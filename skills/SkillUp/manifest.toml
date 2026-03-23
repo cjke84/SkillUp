@@ -1,0 +1,20 @@
+name = "SkillUp"
+slug = "skillup"
+version = "0.1.0"
+description = "Publish one skill or a repository of skills to GitHub, Xiaping Skill, OpenClaw, and ClawHub."
+category = "developer-tools"
+visibility = "public"
+
+[github]
+enabled = true
+
+[xiaping]
+enabled = true
+title = "SkillUp"
+summary = "Cross-platform skill publishing automation for Codex and OpenClaw-compatible agents."
+
+[openclaw]
+enabled = true
+
+[clawhub]
+enabled = true

@@ -1,0 +1,20 @@
+name = "example-skill"
+slug = "example-skill"
+version = "0.1.0"
+description = "Example metadata for SkillUp publishing"
+category = "productivity"
+visibility = "public"
+
+[github]
+enabled = true
+
+[xiaping]
+enabled = true
+title = "Example Skill"
+summary = "Short summary for Xiaping uploads"
+
+[openclaw]
+enabled = true
+
+[clawhub]
+enabled = true
