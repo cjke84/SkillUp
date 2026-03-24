@@ -212,6 +212,12 @@ fi' >"$CLAWHUB_STATUS_LOG" 2>&1
 
 assert_contains "$CLAWHUB_STATUS_LOG" "remote_version=1.2.3"
 
+OPENCLAW_SUMMARY_LOG="$TMP_DIR/openclaw-summary.log"
+/bin/sh -c '. "'"$ROOT_DIR"'/skills/SkillUp/scripts/lib/common.sh"; record_result openclaw /tmp/openclaw-demo status-review "OpenClaw 中文社区 CLI returned unparsable skill list" "" "demo" "1.2.3" "cli_parse_error"; print_status_summary /tmp/openclaw-demo 1.2.3' \
+  >"$OPENCLAW_SUMMARY_LOG" 2>&1
+
+assert_contains "$OPENCLAW_SUMMARY_LOG" "OpenClaw 中文社区待确认"
+
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - clawhub"

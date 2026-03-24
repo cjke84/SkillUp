@@ -1,5 +1,14 @@
 #!/bin/sh
 
+openclaw_status_via_cli() {
+  if ! command_exists claw; then
+    return 1
+  fi
+
+  NODE_TLS_REJECT_UNAUTHORIZED=0 claw skill my >/tmp/skillup-openclaw-status.out 2>/tmp/skillup-openclaw-status.log || true
+  return 0
+}
+
 check_openclaw() {
   skill_dir=$1
   config_path=$2
@@ -17,12 +26,22 @@ status_openclaw() {
   config_path=$2
   local_version=$3
   _unused=$config_path
+  slug=$(skill_slug "$skill_dir")
 
   if command_exists claw; then
-    record_result "openclaw" "$skill_dir" "status-review" "OpenClaw 中文社区 requires CLI or community-side inspection for exact version status" "" "$(skill_slug "$skill_dir")" "$local_version" ""
-    printf '[openclaw] %s remote=unknown status=review\n' "$skill_dir"
+    openclaw_status_via_cli
+    if grep -F "Client network socket disconnected before secure TLS connection was established" /tmp/skillup-openclaw-status.log >/dev/null 2>&1; then
+      record_result "openclaw" "$skill_dir" "status-review" "OpenClaw 中文社区 CLI hit TLS connection issue while fetching skill list" "" "$slug" "$local_version" "tls_error"
+      printf '[openclaw] %s remote=unknown status=review\n' "$skill_dir"
+    elif grep -E "Spread syntax requires|forEach is not a function|unparsable" /tmp/skillup-openclaw-status.log >/dev/null 2>&1; then
+      record_result "openclaw" "$skill_dir" "status-review" "OpenClaw 中文社区 CLI returned unparsable skill list" "" "$slug" "$local_version" "cli_parse_error"
+      printf '[openclaw] %s remote=unknown status=review\n' "$skill_dir"
+    else
+      record_result "openclaw" "$skill_dir" "status-review" "OpenClaw 中文社区 requires CLI or community-side inspection for exact version status" "" "$slug" "$local_version" ""
+      printf '[openclaw] %s remote=unknown status=review\n' "$skill_dir"
+    fi
   else
-    record_result "openclaw" "$skill_dir" "status-unknown" "claw CLI unavailable" "" "$(skill_slug "$skill_dir")" "" ""
+    record_result "openclaw" "$skill_dir" "status-unknown" "claw CLI unavailable" "" "$slug" "" ""
     printf '[openclaw] %s remote=unknown\n' "$skill_dir"
   fi
   return 0
