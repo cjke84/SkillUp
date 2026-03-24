@@ -1,5 +1,53 @@
 #!/bin/sh
 
+xiaping_version_relation() {
+  local_version=$1
+  remote_version=$2
+
+  python3 - "$local_version" "$remote_version" <<'PY'
+import re
+import sys
+
+local_version = sys.argv[1]
+remote_version = sys.argv[2]
+
+pattern = re.compile(r'^(\d+)\.(\d+)\.(\d+)$')
+local_match = pattern.match(local_version or "")
+remote_match = pattern.match(remote_version or "")
+
+if not local_match or not remote_match:
+    print("different")
+    raise SystemExit(0)
+
+local_parts = tuple(int(x) for x in local_match.groups())
+remote_parts = tuple(int(x) for x in remote_match.groups())
+
+if remote_parts == local_parts:
+    print("exact")
+elif remote_parts[:2] == local_parts[:2] and remote_parts[2] > local_parts[2]:
+    print("platform-adjusted")
+else:
+    print("different")
+PY
+}
+
+xiaping_fetch_current_version() {
+  skill_id=$1
+  response=$(curl -sS "https://xiaping.coze.site/api/skills/$skill_id" 2>/dev/null || true)
+  if [ -z "$response" ]; then
+    printf '\n'
+    return 0
+  fi
+
+  python3 - "$response" <<'PY'
+import json
+import sys
+
+payload = json.loads(sys.argv[1])
+print(payload.get("data", {}).get("current_version", ""))
+PY
+}
+
 check_xiaping() {
   skill_dir=$1
   config_path=$2
@@ -59,9 +107,13 @@ payload = json.loads(sys.argv[1])
 print(payload.get("data", {}).get("current_version", ""))
 PY
 )
-  if [ "$remote_version" = "$local_version" ]; then
+  version_relation=$(xiaping_version_relation "$local_version" "$remote_version")
+  if [ "$version_relation" = "exact" ]; then
     record_result "xiaping" "$skill_dir" "in-sync" "Xiaping version matches local" "https://xiaping.coze.site/skill/$skill_id" "$skill_id" "$remote_version" ""
     printf '[xiaping] %s remote=%s status=in-sync\n' "$skill_dir" "$remote_version"
+  elif [ "$version_relation" = "platform-adjusted" ]; then
+    record_result "xiaping" "$skill_dir" "platform-version-adjusted" "Xiaping auto-adjusted patch version to $remote_version" "https://xiaping.coze.site/skill/$skill_id" "$skill_id" "$remote_version" ""
+    printf '[xiaping] %s remote=%s status=platform-adjusted\n' "$skill_dir" "$remote_version"
   else
     record_result "xiaping" "$skill_dir" "out-of-sync" "Xiaping version differs from local" "https://xiaping.coze.site/skill/$skill_id" "$skill_id" "$remote_version" ""
     printf '[xiaping] %s remote=%s status=out-of-sync\n' "$skill_dir" "$remote_version"
@@ -147,7 +199,17 @@ PY
         -F "file=@$artifact_path")
 
       if [ "$upload_code" -ge 200 ] && [ "$upload_code" -lt 300 ]; then
-        record_result "xiaping" "$skill_dir" "published" "uploaded new version through /api/upload" "https://xiaping.coze.site/skill/$existing_skill_id" "$existing_skill_id" "$version" "trial"
+        remote_version=$(xiaping_fetch_current_version "$existing_skill_id")
+        version_relation=$(xiaping_version_relation "$version" "$remote_version")
+        if [ "$version_relation" = "platform-adjusted" ]; then
+          record_result "xiaping" "$skill_dir" "published" "uploaded new version through /api/upload; platform adjusted version to $remote_version" "https://xiaping.coze.site/skill/$existing_skill_id" "$existing_skill_id" "$remote_version" "trial"
+        else
+          published_version=$version
+          if [ -n "$remote_version" ]; then
+            published_version=$remote_version
+          fi
+          record_result "xiaping" "$skill_dir" "published" "uploaded new version through /api/upload" "https://xiaping.coze.site/skill/$existing_skill_id" "$existing_skill_id" "$published_version" "trial"
+        fi
         return 0
       fi
 
@@ -187,7 +249,17 @@ except Exception:
     print('')
 PY
 )
-    record_result "xiaping" "$skill_dir" "published" "upload accepted by $base_url$upload_path" "$share_url" "$skill_id" "$version" "$review_state"
+    remote_version=$(xiaping_fetch_current_version "$skill_id")
+    version_relation=$(xiaping_version_relation "$version" "$remote_version")
+    if [ "$version_relation" = "platform-adjusted" ]; then
+      record_result "xiaping" "$skill_dir" "published" "upload accepted by $base_url$upload_path; platform adjusted version to $remote_version" "$share_url" "$skill_id" "$remote_version" "$review_state"
+    else
+      published_version=$version
+      if [ -n "$remote_version" ]; then
+        published_version=$remote_version
+      fi
+      record_result "xiaping" "$skill_dir" "published" "upload accepted by $base_url$upload_path" "$share_url" "$skill_id" "$published_version" "$review_state"
+    fi
   else
     record_result "xiaping" "$skill_dir" "failed" "HTTP $http_code from $base_url$upload_path"
     return 1

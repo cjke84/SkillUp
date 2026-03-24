@@ -166,6 +166,13 @@ SUMMARY_LOG="$TMP_DIR/summary.log"
 
 assert_contains "$SUMMARY_LOG" "ClawHub扫描中"
 
+XIAPING_SUMMARY_LOG="$TMP_DIR/xiaping-summary.log"
+/bin/sh -c '. "'"$ROOT_DIR"'/skills/SkillUp/scripts/lib/common.sh"; record_result xiaping /tmp/xiaping-demo platform-version-adjusted "Xiaping accepted publish with platform-adjusted version 0.1.6" "https://xiaping.coze.site/skill/demo" "demo" "0.1.6" "trial"; print_status_summary /tmp/xiaping-demo 0.1.5' \
+  >"$XIAPING_SUMMARY_LOG" 2>&1
+
+assert_contains "$XIAPING_SUMMARY_LOG" "虾评已同步"
+assert_not_contains "$XIAPING_SUMMARY_LOG" "虾评未同步"
+
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - clawhub"

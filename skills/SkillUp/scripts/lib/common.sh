@@ -897,7 +897,12 @@ for platform, _, status, detail, _, _, version, review_state in rows:
     if platform == "github":
         parts_out.append("GitHub已同步" if status == "in-sync" else "GitHub未同步")
     elif platform == "xiaping":
-        parts_out.append("虾评已同步" if status == "in-sync" else "虾评未同步")
+        if status == "in-sync":
+            parts_out.append("虾评已同步")
+        elif status == "platform-version-adjusted":
+            parts_out.append("虾评已同步")
+        else:
+            parts_out.append("虾评未同步")
     elif platform == "openclaw":
         if status == "in-sync":
             parts_out.append("OpenClaw 中文社区已同步")
