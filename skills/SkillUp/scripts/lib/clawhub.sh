@@ -17,17 +17,21 @@ status_clawhub() {
   config_path=$2
   local_version=$3
   _unused=$config_path
+  slug=$(skill_slug "$skill_dir")
 
   if command_exists clawhub; then
-    if clawhub inspect "$(skill_slug "$skill_dir")" --json >/tmp/skillup-clawhub-status.json 2>/dev/null; then
-      record_result "clawhub" "$skill_dir" "status-review" "ClawHub skill exists; inspect output for exact version details" "" "$(skill_slug "$skill_dir")" "$local_version" ""
+    if clawhub inspect "$slug" --json >/tmp/skillup-clawhub-status.json 2>/tmp/skillup-clawhub-status.log; then
+      record_result "clawhub" "$skill_dir" "status-review" "ClawHub skill exists; inspect output for exact version details" "" "$slug" "$local_version" ""
       printf '[clawhub] %s remote=exists status=review\n' "$skill_dir"
+    elif grep -E "security scan is pending|hidden while security scan is pending" /tmp/skillup-clawhub-status.log >/dev/null 2>&1; then
+      record_result "clawhub" "$skill_dir" "status-review" "ClawHub security scan pending" "" "$slug" "$local_version" "security_scan_pending"
+      printf '[clawhub] %s remote=pending status=review\n' "$skill_dir"
     else
-      record_result "clawhub" "$skill_dir" "out-of-sync" "ClawHub skill not found" "" "$(skill_slug "$skill_dir")" "" ""
+      record_result "clawhub" "$skill_dir" "out-of-sync" "ClawHub skill not found" "" "$slug" "" ""
       printf '[clawhub] %s remote=missing status=out-of-sync\n' "$skill_dir"
     fi
   else
-    record_result "clawhub" "$skill_dir" "status-unknown" "clawhub CLI unavailable" "" "$(skill_slug "$skill_dir")" "" ""
+    record_result "clawhub" "$skill_dir" "status-unknown" "clawhub CLI unavailable" "" "$slug" "" ""
     printf '[clawhub] %s remote=unknown\n' "$skill_dir"
   fi
   return 0

@@ -160,6 +160,12 @@ assert_contains "$STATUS_LOG" "[status]"
 assert_contains "$RESULT_JSON" "\"platform\": \"status\""
 assert_not_contains "$STATUS_LOG" "Unknown argument"
 
+SUMMARY_LOG="$TMP_DIR/summary.log"
+ /bin/sh -c '. "'"$ROOT_DIR"'/skills/SkillUp/scripts/lib/common.sh"; record_result clawhub /tmp/demo status-review "ClawHub security scan pending" "" "" "1.2.3" "security_scan_pending"; print_status_summary /tmp/demo 1.2.3' \
+  >"$SUMMARY_LOG" 2>&1
+
+assert_contains "$SUMMARY_LOG" "ClawHub扫描中"
+
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - clawhub"

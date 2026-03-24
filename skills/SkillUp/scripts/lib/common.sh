@@ -893,7 +893,7 @@ for line in os.environ.get("SKILLUP_RESULTS_DATA", "").splitlines():
     rows.append(parts)
 
 parts_out = []
-for platform, _, status, _, _, _, version, _ in rows:
+for platform, _, status, detail, _, _, version, review_state in rows:
     if platform == "github":
         parts_out.append("GitHub已同步" if status == "in-sync" else "GitHub未同步")
     elif platform == "xiaping":
@@ -908,6 +908,11 @@ for platform, _, status, _, _, _, version, _ in rows:
     elif platform == "clawhub":
         if status == "in-sync":
             parts_out.append("ClawHub已同步")
+        elif status == "status-review":
+            if review_state == "security_scan_pending" or "scan pending" in detail.lower():
+                parts_out.append("ClawHub扫描中")
+            else:
+                parts_out.append("ClawHub待确认")
         elif status == "out-of-sync":
             parts_out.append("ClawHub未发布")
         else:
