@@ -1,5 +1,51 @@
 #!/bin/sh
 
+clawhub_remote_version_from_file() {
+  status_file=$1
+  [ -f "$status_file" ] || return 1
+
+  python3 - "$status_file" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    payload = json.load(open(path, encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+
+version = (
+    payload.get("latestVersion", {}).get("version")
+    or payload.get("skill", {}).get("tags", {}).get("latest")
+    or ""
+)
+if not version:
+    raise SystemExit(1)
+print(version)
+PY
+}
+
+clawhub_remote_summary_from_file() {
+  status_file=$1
+  [ -f "$status_file" ] || return 1
+
+  python3 - "$status_file" <<'PY'
+import json
+import sys
+
+path = sys.argv[1]
+try:
+    payload = json.load(open(path, encoding='utf-8'))
+except Exception:
+    raise SystemExit(1)
+
+summary = payload.get("skill", {}).get("summary", "")
+if not summary:
+    raise SystemExit(1)
+print(summary)
+PY
+}
+
 check_clawhub() {
   skill_dir=$1
   config_path=$2
@@ -21,8 +67,18 @@ status_clawhub() {
 
   if command_exists clawhub; then
     if clawhub inspect "$slug" --json >/tmp/skillup-clawhub-status.json 2>/tmp/skillup-clawhub-status.log; then
-      record_result "clawhub" "$skill_dir" "status-review" "ClawHub skill exists; inspect output for exact version details" "" "$slug" "$local_version" ""
-      printf '[clawhub] %s remote=exists status=review\n' "$skill_dir"
+      remote_version=$(clawhub_remote_version_from_file /tmp/skillup-clawhub-status.json 2>/dev/null || true)
+      remote_summary=$(clawhub_remote_summary_from_file /tmp/skillup-clawhub-status.json 2>/dev/null || true)
+      if [ -n "$remote_version" ] && [ "$remote_version" = "$local_version" ]; then
+        record_result "clawhub" "$skill_dir" "in-sync" "ClawHub version matches local${remote_summary:+; summary: $remote_summary}" "https://clawhub.ai/skills/$slug" "$slug" "$remote_version" ""
+        printf '[clawhub] %s remote=%s status=in-sync\n' "$skill_dir" "$remote_version"
+      elif [ -n "$remote_version" ]; then
+        record_result "clawhub" "$skill_dir" "status-review" "ClawHub remote version is $remote_version${remote_summary:+; summary: $remote_summary}" "https://clawhub.ai/skills/$slug" "$slug" "$remote_version" ""
+        printf '[clawhub] %s remote=%s status=review\n' "$skill_dir" "$remote_version"
+      else
+        record_result "clawhub" "$skill_dir" "status-review" "ClawHub skill exists; inspect output for exact version details" "https://clawhub.ai/skills/$slug" "$slug" "$local_version" ""
+        printf '[clawhub] %s remote=exists status=review\n' "$skill_dir"
+      fi
     elif grep -E "security scan is pending|hidden while security scan is pending" /tmp/skillup-clawhub-status.log >/dev/null 2>&1; then
       record_result "clawhub" "$skill_dir" "status-review" "ClawHub security scan pending" "" "$slug" "$local_version" "security_scan_pending"
       printf '[clawhub] %s remote=pending status=review\n' "$skill_dir"

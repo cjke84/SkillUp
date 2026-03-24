@@ -200,6 +200,18 @@ assert_contains "$LOCALIZED_LOG" "openclaw_description=这是给 OpenClaw 中文
 assert_contains "$LOCALIZED_LOG" "clawhub_name=SkillUp English Title"
 assert_contains "$LOCALIZED_LOG" "clawhub_description=English description for ClawHub."
 
+CLAWHUB_STATUS_LOG="$TMP_DIR/clawhub-status.log"
+/bin/sh -c '. "'"$ROOT_DIR"'/skills/SkillUp/scripts/lib/common.sh"; . "'"$ROOT_DIR"'/skills/SkillUp/scripts/lib/clawhub.sh"; cat > /tmp/skillup-clawhub-status.json <<'\''EOF'\'' 
+{"skill":{"summary":"English description for ClawHub."},"latestVersion":{"version":"1.2.3"}}
+EOF
+if clawhub_remote_version_from_file /tmp/skillup-clawhub-status.json; then
+  printf "remote_version=%s\n" "$(clawhub_remote_version_from_file /tmp/skillup-clawhub-status.json)"
+else
+  printf "remote_version=\n"
+fi' >"$CLAWHUB_STATUS_LOG" 2>&1
+
+assert_contains "$CLAWHUB_STATUS_LOG" "remote_version=1.2.3"
+
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - clawhub"
