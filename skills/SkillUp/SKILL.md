@@ -1,7 +1,7 @@
 ---
 name: SkillUp
 description: 当你要把一个技能目录或技能仓库发布到 GitHub、虾评 Skill、OpenClaw 中文社区或 ClawHub，并希望优先使用环境变量和非浏览器自动化时使用
-version: 0.1.4
+version: 0.1.5
 metadata:
   openclaw:
     requires:
