@@ -42,7 +42,8 @@ publish_clawhub() {
   artifact_path=$2
   config_path=$3
   dry_run=$4
-  skill_dir_abs=$(CDPATH= cd -- "$skill_dir" && pwd)
+  publish_skill_dir=$(prepare_platform_skill_dir "$skill_dir" clawhub)
+  skill_dir_abs=$(CDPATH= cd -- "$publish_skill_dir" && pwd)
 
   token=$(env_or_config "SKILLUP_CLAWHUB_TOKEN" "$config_path" clawhub token "")
   if [ -z "$token" ]; then
@@ -61,6 +62,7 @@ publish_clawhub() {
     else
       record_result "clawhub" "$skill_dir" "dry-run" "would publish artifact $artifact_path"
     fi
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return
   fi
 
@@ -73,6 +75,7 @@ publish_clawhub() {
 
     if "$cli_bin" publish "$skill_dir_abs" --version "$version" --site "$site_url" --registry "$registry_url" --no-input >/tmp/skillup-clawhub-cli.log 2>&1; then
       record_result "clawhub" "$skill_dir" "published" "published through $cli_bin publish" "https://clawhub.ai/skills/$(skill_slug "$skill_dir")" "$(skill_slug "$skill_dir")" "$version" ""
+      [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
       return
     fi
   fi
@@ -83,6 +86,7 @@ publish_clawhub() {
     else
       record_result "clawhub" "$skill_dir" "failed" "ClawHub CLI publish failed and no API token is available for HTTP fallback"
     fi
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return 1
   fi
 
@@ -93,10 +97,12 @@ publish_clawhub() {
       else
         record_result "clawhub" "$skill_dir" "failed" "clawhub CLI publish failed and no endpoint is configured"
       fi
+      [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
       return 1
     else
       record_result "clawhub" "$skill_dir" "skipped" "endpoint not configured; artifact ready at $artifact_path"
     fi
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return
   fi
 
@@ -115,8 +121,11 @@ publish_clawhub() {
     record_result "clawhub" "$skill_dir" "published" "upload accepted by $base_url$upload_path"
   else
     record_result "clawhub" "$skill_dir" "failed" "HTTP $http_code from $base_url$upload_path"
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return 1
   fi
+
+  [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
 
   return 0
 }

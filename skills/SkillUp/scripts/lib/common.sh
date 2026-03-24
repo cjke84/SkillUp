@@ -364,6 +364,132 @@ skill_name() {
   printf '%s\n' "$name"
 }
 
+platform_text_preference() {
+  platform=$1
+  field_base=$2
+  skill_dir=$3
+
+  case "$platform" in
+    xiaping|openclaw)
+      value=$(manifest_section_get "$skill_dir" "$platform" "${field_base}_zh" 2>/dev/null || true)
+      if [ -n "$value" ]; then
+        printf '%s\n' "$value"
+        return 0
+      fi
+      ;;
+    clawhub)
+      value=$(manifest_section_get "$skill_dir" "$platform" "${field_base}_en" 2>/dev/null || true)
+      if [ -n "$value" ]; then
+        printf '%s\n' "$value"
+        return 0
+      fi
+      ;;
+  esac
+
+  value=$(manifest_section_get "$skill_dir" "$platform" "$field_base" 2>/dev/null || true)
+  if [ -n "$value" ]; then
+    printf '%s\n' "$value"
+    return 0
+  fi
+
+  case "$field_base" in
+    title)
+      skill_name "$skill_dir"
+      ;;
+    description|summary)
+      value=$(manifest_get "$skill_dir" description 2>/dev/null || true)
+      if [ -z "$value" ]; then
+        value=$(frontmatter_get "$skill_dir" description 2>/dev/null || true)
+      fi
+      printf '%s\n' "$value"
+      ;;
+    *)
+      printf '\n'
+      ;;
+  esac
+}
+
+replace_frontmatter_field() {
+  skill_md_path=$1
+  key=$2
+  new_value=$3
+
+  python3 - "$skill_md_path" "$key" "$new_value" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+new_value = sys.argv[3]
+lines = path.read_text(encoding="utf-8").splitlines()
+in_frontmatter = False
+replaced = False
+for idx, line in enumerate(lines):
+    if idx == 0 and line == "---":
+        in_frontmatter = True
+        continue
+    if in_frontmatter and line == "---":
+        if not replaced:
+            lines.insert(idx, f"{key}: {new_value}")
+        break
+    if in_frontmatter and line.startswith(f"{key}:"):
+        lines[idx] = f"{key}: {new_value}"
+        replaced = True
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
+replace_manifest_field() {
+  manifest_path=$1
+  key=$2
+  new_value=$3
+  [ -f "$manifest_path" ] || return 0
+
+  python3 - "$manifest_path" "$key" "$new_value" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+key = sys.argv[2]
+new_value = sys.argv[3]
+lines = path.read_text(encoding="utf-8").splitlines()
+for idx, line in enumerate(lines):
+    if line.startswith(f"{key} = "):
+        lines[idx] = f'{key} = "{new_value}"'
+        break
+path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+}
+
+prepare_platform_skill_dir() {
+  skill_dir=$1
+  platform=$2
+
+  localized_name=$(platform_text_preference "$platform" title "$skill_dir")
+  localized_description=$(platform_text_preference "$platform" description "$skill_dir")
+
+  if [ -z "$localized_name" ] && [ -z "$localized_description" ]; then
+    printf '%s\n' "$skill_dir"
+    return 0
+  fi
+
+  temp_root=$(mktemp -d "/tmp/skillup-${platform}.XXXXXX")
+  skill_copy="$temp_root/$(basename "$skill_dir")"
+  cp -R "$skill_dir" "$skill_copy"
+
+  if [ -n "$localized_name" ]; then
+    replace_frontmatter_field "$skill_copy/SKILL.md" name "$localized_name"
+    replace_manifest_field "$skill_copy/manifest.toml" name "$localized_name"
+  fi
+
+  if [ -n "$localized_description" ]; then
+    replace_frontmatter_field "$skill_copy/SKILL.md" description "$localized_description"
+    replace_manifest_field "$skill_copy/manifest.toml" description "$localized_description"
+  fi
+
+  printf '%s\n' "$skill_copy"
+}
+
 json_quote() {
   python3 -c 'import json,sys; print(json.dumps(sys.argv[1]))' "$1"
 }

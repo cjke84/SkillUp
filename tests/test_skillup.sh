@@ -58,15 +58,21 @@ enabled = $github_enabled
 
 [xiaping]
 enabled = $xiaping_enabled
+title_zh = "测试技能中文名"
+description_zh = "这是给虾评使用的中文介绍"
 trigger = "[\"测试技能\"]"
 category = "[\"开发辅助\"]"
 tags = "[\"测试\"]"
 
 [openclaw]
 enabled = true
+title_zh = "OpenClaw 中文标题"
+description_zh = "这是给 OpenClaw 中文社区使用的中文介绍"
 
 [clawhub]
 enabled = true
+title_en = "SkillUp English Title"
+description_en = "English description for ClawHub."
 EOF
 }
 
@@ -172,6 +178,27 @@ XIAPING_SUMMARY_LOG="$TMP_DIR/xiaping-summary.log"
 
 assert_contains "$XIAPING_SUMMARY_LOG" "虾评已同步"
 assert_not_contains "$XIAPING_SUMMARY_LOG" "虾评未同步"
+
+LOCALIZED_LOG="$TMP_DIR/localized.log"
+/bin/sh -c '. "'"$ROOT_DIR"'/skills/SkillUp/scripts/lib/common.sh"; \
+  localized_xiaping=$(prepare_platform_skill_dir "'"$TEST_SKILL"'" xiaping); \
+  localized_openclaw=$(prepare_platform_skill_dir "'"$TEST_SKILL"'" openclaw); \
+  localized_clawhub=$(prepare_platform_skill_dir "'"$TEST_SKILL"'" clawhub); \
+  printf "xiaping_name=%s\n" "$(frontmatter_get "$localized_xiaping" name)"; \
+  printf "xiaping_description=%s\n" "$(frontmatter_get "$localized_xiaping" description)"; \
+  printf "openclaw_name=%s\n" "$(frontmatter_get "$localized_openclaw" name)"; \
+  printf "openclaw_description=%s\n" "$(frontmatter_get "$localized_openclaw" description)"; \
+  printf "clawhub_name=%s\n" "$(frontmatter_get "$localized_clawhub" name)"; \
+  printf "clawhub_description=%s\n" "$(frontmatter_get "$localized_clawhub" description)"; \
+  rm -rf "$(dirname "$localized_xiaping")" "$(dirname "$localized_openclaw")" "$(dirname "$localized_clawhub")"' \
+  >"$LOCALIZED_LOG" 2>&1
+
+assert_contains "$LOCALIZED_LOG" "xiaping_name=测试技能中文名"
+assert_contains "$LOCALIZED_LOG" "xiaping_description=这是给虾评使用的中文介绍"
+assert_contains "$LOCALIZED_LOG" "openclaw_name=OpenClaw 中文标题"
+assert_contains "$LOCALIZED_LOG" "openclaw_description=这是给 OpenClaw 中文社区使用的中文介绍"
+assert_contains "$LOCALIZED_LOG" "clawhub_name=SkillUp English Title"
+assert_contains "$LOCALIZED_LOG" "clawhub_description=English description for ClawHub."
 
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"

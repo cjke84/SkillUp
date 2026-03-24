@@ -126,15 +126,16 @@ publish_xiaping() {
   artifact_path=$2
   config_path=$3
   dry_run=$4
+  publish_skill_dir=$(prepare_platform_skill_dir "$skill_dir" xiaping)
 
   api_key=$(env_or_config "SKILLUP_XIAPING_API_KEY" "$config_path" xiaping api_key "")
   base_url=$(config_get "$config_path" xiaping base_url "https://xiaping.coze.site")
   upload_path=$(config_get "$config_path" xiaping upload_path "/api/skills")
-  name=$(manifest_get "$skill_dir" name 2>/dev/null || true)
+  name=$(manifest_get "$publish_skill_dir" name 2>/dev/null || true)
   if [ -z "$name" ]; then
-    name=$(frontmatter_get "$skill_dir" name 2>/dev/null || true)
+    name=$(frontmatter_get "$publish_skill_dir" name 2>/dev/null || true)
   fi
-  description=$(manifest_get "$skill_dir" description 2>/dev/null || true)
+  description=$(manifest_get "$publish_skill_dir" description 2>/dev/null || true)
   version=$(skill_version "$skill_dir")
   trigger=$(manifest_section_get "$skill_dir" xiaping trigger 2>/dev/null || true)
   category=$(manifest_section_get "$skill_dir" xiaping category 2>/dev/null || true)
@@ -155,16 +156,19 @@ publish_xiaping() {
 
   if [ "$dry_run" -eq 1 ]; then
     record_result "xiaping" "$skill_dir" "dry-run" "would upload $artifact_path to $base_url$upload_path"
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return
   fi
 
   if [ -z "$api_key" ]; then
     record_result "xiaping" "$skill_dir" "skipped" "missing API key"
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return
   fi
 
   if [ -z "$name" ] || [ -z "$description" ] || [ -z "$version" ]; then
     record_result "xiaping" "$skill_dir" "failed" "missing name, description, or version metadata"
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return
   fi
 
@@ -199,6 +203,7 @@ PY
         -F "file=@$artifact_path")
 
       if [ "$upload_code" -ge 200 ] && [ "$upload_code" -lt 300 ]; then
+        [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
         remote_version=$(xiaping_fetch_current_version "$existing_skill_id")
         version_relation=$(xiaping_version_relation "$version" "$remote_version")
         if [ "$version_relation" = "platform-adjusted" ]; then
@@ -214,6 +219,7 @@ PY
       fi
 
       record_result "xiaping" "$skill_dir" "failed" "HTTP $upload_code from $base_url/api/upload"
+      [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
       return 1
     fi
   fi
@@ -262,8 +268,11 @@ PY
     fi
   else
     record_result "xiaping" "$skill_dir" "failed" "HTTP $http_code from $base_url$upload_path"
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return 1
   fi
+
+  [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
 
   return 0
 }

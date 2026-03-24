@@ -33,6 +33,7 @@ publish_openclaw() {
   artifact_path=$2
   config_path=$3
   dry_run=$4
+  publish_skill_dir=$(prepare_platform_skill_dir "$skill_dir" openclaw)
 
   token=$(env_or_config "SKILLUP_OPENCLAW_TOKEN" "$config_path" openclaw token "")
   base_url=$(config_get "$config_path" openclaw base_url "")
@@ -42,10 +43,11 @@ publish_openclaw() {
 
   if [ "$dry_run" -eq 1 ]; then
     if command_exists "$cli_bin"; then
-      record_result "openclaw" "$skill_dir" "dry-run" "would run $cli_bin skill publish for $skill_dir"
+      record_result "openclaw" "$skill_dir" "dry-run" "would run $cli_bin skill publish for $publish_skill_dir"
     else
       record_result "openclaw" "$skill_dir" "dry-run" "would publish artifact $artifact_path"
     fi
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return
   fi
 
@@ -56,7 +58,7 @@ publish_openclaw() {
     fi
 
     if [ -n "$publish_args" ]; then
-      if (cd "$skill_dir" && "$cli_bin" skill publish $publish_args >/tmp/skillup-openclaw-cli.log 2>&1); then
+      if (cd "$publish_skill_dir" && "$cli_bin" skill publish $publish_args >/tmp/skillup-openclaw-cli.log 2>&1); then
         publish_id=$(python3 - <<'PY'
 import re
 try:
@@ -66,7 +68,7 @@ except Exception:
 match = re.search(r'Skill published:\s*([^\s(]+)', text)
 print(match.group(1) if match else '')
 PY
-)
+        )
         review_state=$(python3 - <<'PY'
 try:
     text = open('/tmp/skillup-openclaw-cli.log', 'r', encoding='utf-8').read().lower()
@@ -74,12 +76,13 @@ except Exception:
     text = ''
 print('pending_review' if 'pending review' in text else '')
 PY
-)
+        )
         record_result "openclaw" "$skill_dir" "published" "published through $cli_bin skill publish" "" "$publish_id" "$(skill_version "$skill_dir")" "$review_state"
+        [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
         return
       fi
     else
-      if (cd "$skill_dir" && "$cli_bin" skill publish >/tmp/skillup-openclaw-cli.log 2>&1); then
+      if (cd "$publish_skill_dir" && "$cli_bin" skill publish >/tmp/skillup-openclaw-cli.log 2>&1); then
         publish_id=$(python3 - <<'PY'
 import re
 try:
@@ -89,7 +92,7 @@ except Exception:
 match = re.search(r'Skill published:\s*([^\s(]+)', text)
 print(match.group(1) if match else '')
 PY
-)
+        )
         review_state=$(python3 - <<'PY'
 try:
     text = open('/tmp/skillup-openclaw-cli.log', 'r', encoding='utf-8').read().lower()
@@ -97,8 +100,9 @@ except Exception:
     text = ''
 print('pending_review' if 'pending review' in text else '')
 PY
-)
+        )
         record_result "openclaw" "$skill_dir" "published" "published through $cli_bin skill publish" "" "$publish_id" "$(skill_version "$skill_dir")" "$review_state"
+        [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
         return
       fi
     fi
@@ -107,10 +111,12 @@ PY
   if [ -z "$base_url" ] || [ -z "$upload_path" ]; then
     if command_exists "$cli_bin"; then
       record_result "openclaw" "$skill_dir" "failed" "community CLI publish failed and no endpoint is configured"
+      [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
       return 1
     else
       record_result "openclaw" "$skill_dir" "skipped" "endpoint not configured; artifact ready at $artifact_path"
     fi
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return
   fi
 
@@ -134,8 +140,11 @@ PY
     record_result "openclaw" "$skill_dir" "published" "upload accepted by $base_url$upload_path"
   else
     record_result "openclaw" "$skill_dir" "failed" "HTTP $http_code from $base_url$upload_path"
+    [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
     return 1
   fi
+
+  [ "$publish_skill_dir" = "$skill_dir" ] || rm -rf "$(dirname "$publish_skill_dir")"
 
   return 0
 }
