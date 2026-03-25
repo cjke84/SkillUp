@@ -10,6 +10,7 @@ enabled = true
 
 [xiaping]
 enabled = true
+skill_id = "5d934476-71bc-4f87-9cb3-fd8fa4249cd6"
 title = "SkillUp"
 title_zh = "SkillUp"
 summary = "一个面向 Codex 和 OpenClaw 中文社区智能体的跨平台技能发布工具。"
