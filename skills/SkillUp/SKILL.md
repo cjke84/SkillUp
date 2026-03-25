@@ -51,7 +51,7 @@ metadata:
 统一入口：
 
 ```bash
-./skills/SkillUp/scripts/publish.sh [publish|check|package] --source <path> [options]
+./skills/SkillUp/scripts/publish.sh [publish|check|package|redact-check] --source <path> [options]
 ```
 
 常用参数：
@@ -65,6 +65,7 @@ metadata:
 - `--fail-fast`: stop at the first failure
 - `--continue-on-error`: keep going after failures
 - `--retry <n>`: retry failed publishes
+- `--redact-mode <mode>`: `strict`, `warn`, `off`
 
 模式：
 
@@ -74,6 +75,7 @@ metadata:
 - `doctor`：检查本地发布环境是否齐全
 - `status`：查看本地版本和远端平台状态
 - `bump`：自动提升版本号
+- `redact-check`：上传前脱敏检查，扫描目录中的敏感信息
 
 ## Credential Priority
 
@@ -112,6 +114,13 @@ metadata:
 - 在 `manifest.toml` 里设置 `[github].enabled = false` 之类的值，可以跳过某个平台
 - 可以把 manifest 中的开关和 `--platforms <csv>` 组合使用，分别控制“允许的平台集合”和“实际启用的平台集合”
 
+上传前脱敏检查：
+
+- 默认使用 `strict` 模式，在打包前扫描技能目录中的文本文件
+- 命中高风险敏感内容会直接阻止 `check`、`package`、`publish`
+- 可用 `.skillup-ignore` 忽略特定文件或 glob 模式
+- 如需只提示不阻止，可用 `--redact-mode warn`
+
 ## Publish Flow
 
 1. 从给定 source 路径发现 skill
@@ -140,6 +149,14 @@ metadata:
   check \
   --source ./skills/SkillUp \
   --result-file ./skills/SkillUp/.skillup-artifacts/check-result.json
+```
+
+只做脱敏检查：
+
+```bash
+./skills/SkillUp/scripts/publish.sh \
+  redact-check \
+  --source ./skills/SkillUp
 ```
 
 使用配置文件发布整个 skills 仓库：

@@ -218,6 +218,40 @@ OPENCLAW_SUMMARY_LOG="$TMP_DIR/openclaw-summary.log"
 
 assert_contains "$OPENCLAW_SUMMARY_LOG" "OpenClaw 中文社区待确认"
 
+SECRET_SKILL="$TMP_DIR/skills/secret-skill"
+make_skill "$SECRET_SKILL" "version: 1.2.3"
+make_manifest "$SECRET_SKILL" true true
+cat > "$SECRET_SKILL/notes.md" <<'EOF'
+This is a test note.
+Authorization: Bearer sk_live_secret_token_value_1234567890
+EOF
+SECRET_LOG="$TMP_DIR/secret.log"
+
+if "$ROOT_DIR/skills/SkillUp/scripts/publish.sh" check --source "$SECRET_SKILL" >"$SECRET_LOG" 2>&1; then
+  echo "Expected check mode to fail for sensitive content" >&2
+  exit 1
+fi
+
+assert_contains "$SECRET_LOG" "sensitive content detected"
+assert_contains "$SECRET_LOG" "notes.md"
+
+IGNORED_SECRET_SKILL="$TMP_DIR/skills/ignored-secret-skill"
+make_skill "$IGNORED_SECRET_SKILL" "version: 1.2.3"
+make_manifest "$IGNORED_SECRET_SKILL" true true
+cat > "$IGNORED_SECRET_SKILL/notes.md" <<'EOF'
+Authorization: Bearer sk_live_secret_token_value_1234567890
+EOF
+cat > "$IGNORED_SECRET_SKILL/.skillup-ignore" <<'EOF'
+notes.md
+EOF
+IGNORED_SECRET_LOG="$TMP_DIR/ignored-secret.log"
+
+"$ROOT_DIR/skills/SkillUp/scripts/publish.sh" check \
+  --source "$IGNORED_SECRET_SKILL" \
+  >"$IGNORED_SECRET_LOG" 2>&1
+
+assert_not_contains "$IGNORED_SECRET_LOG" "-> failed (sensitive content detected"
+
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - clawhub"

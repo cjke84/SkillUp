@@ -8,6 +8,7 @@ SKILLUP_DEFAULT_ARTIFACT_DIR="$SKILLUP_ROOT/.skillup-artifacts"
 SKILLUP_RESULTS=""
 SKILLUP_FAIL_FAST=0
 SKILLUP_RETRY_COUNT=0
+SKILLUP_REDACT_MODE="strict"
 SKILLUP_MODE="publish"
 SKILLUP_RESULT_FILE=""
 SKILLUP_FAILED=0
@@ -16,7 +17,7 @@ SKILLUP_BUMP_PART=""
 
 usage() {
   cat <<'EOF'
-Usage: publish.sh [publish|check|package|bump|status|doctor] --source <path> [options]
+Usage: publish.sh [publish|check|package|bump|status|doctor|redact-check] --source <path> [options]
 
 Modes:
   publish                Validate, package, and publish skills (default)
@@ -25,6 +26,7 @@ Modes:
   bump                   Update the skill version in SKILL.md and manifest.toml
   status                 Show local and remote publishing status
   doctor                 Check local environment readiness
+  redact-check           Scan skill files for sensitive content before upload
 
 Options:
   --source <path>        Single skill directory or repository root
@@ -36,6 +38,7 @@ Options:
   --fail-fast            Stop after the first failure
   --continue-on-error    Continue processing after failures
   --retry <n>            Retry failed publishes up to n additional times
+  --redact-mode <mode>   strict, warn, off
   --only-validate        Alias for check mode
   --only-package         Alias for package mode
   --help                 Show this message
@@ -51,7 +54,7 @@ main() {
 
   if [ "$#" -gt 0 ]; then
     case "$1" in
-      publish|check|package|status|doctor)
+      publish|check|package|status|doctor|redact-check)
         SKILLUP_MODE=$1
         shift
         ;;
@@ -106,6 +109,10 @@ main() {
         ;;
       --retry)
         SKILLUP_RETRY_COUNT=$2
+        shift 2
+        ;;
+      --redact-mode)
+        SKILLUP_REDACT_MODE=$2
         shift 2
         ;;
       --only-validate)
@@ -722,6 +729,106 @@ validate_artifact() {
   fi
 }
 
+run_redact_check() {
+  skill_dir=$1
+  mode=$2
+  findings_file=${3:-/tmp/skillup-redact-findings.txt}
+
+  case "$mode" in
+    off)
+      record_result "redact-check" "$skill_dir" "skipped" "redaction scan disabled" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+      return 0
+      ;;
+    strict|warn)
+      ;;
+    *)
+      record_result "redact-check" "$skill_dir" "failed" "invalid redact mode: $mode" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+      return 1
+      ;;
+  esac
+
+  python3 - "$skill_dir" "$findings_file" <<'PY'
+from pathlib import Path
+import fnmatch
+import re
+import sys
+
+root = Path(sys.argv[1]).resolve()
+findings_file = Path(sys.argv[2])
+ignore_file = root / ".skillup-ignore"
+ignore_patterns = []
+if ignore_file.exists():
+    ignore_patterns = [
+        line.strip() for line in ignore_file.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.strip().startswith("#")
+    ]
+
+def ignored(path: Path) -> bool:
+    rel = path.relative_to(root).as_posix()
+    for part in rel.split("/"):
+        if part in {".git", ".skillup-artifacts"}:
+            return True
+    for pattern in ignore_patterns:
+        if fnmatch.fnmatch(rel, pattern) or fnmatch.fnmatch(path.name, pattern):
+            return True
+    return False
+
+patterns = [
+    ("private_key", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
+    ("bearer", re.compile(r"Authorization:\s*Bearer\s+[A-Za-z0-9._\-]{16,}", re.IGNORECASE)),
+    ("token_assignment", re.compile(r"(token|api[_-]?key|secret)\s*[:=]\s*[\"']?[A-Za-z0-9_\-]{16,}", re.IGNORECASE)),
+    ("openai_key", re.compile(r"\bsk-[A-Za-z0-9]{20,}\b")),
+    ("github_token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{20,}\b")),
+    ("google_api_key", re.compile(r"\bAIza[0-9A-Za-z\-_]{20,}\b")),
+    ("slack_token", re.compile(r"\bxox[baprs]-[A-Za-z0-9-]{10,}\b")),
+    ("jwt", re.compile(r"\beyJ[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\.[A-Za-z0-9_\-]{10,}\b")),
+]
+
+findings = []
+for path in root.rglob("*"):
+    if not path.is_file() or ignored(path):
+        continue
+    if path.suffix.lower() in {".zip", ".png", ".jpg", ".jpeg", ".gif", ".webp", ".pdf", ".ico"}:
+        continue
+    try:
+        text = path.read_text(encoding="utf-8")
+    except Exception:
+        continue
+    rel = path.relative_to(root).as_posix()
+    for line_no, line in enumerate(text.splitlines(), start=1):
+        for name, pattern in patterns:
+            if pattern.search(line):
+                findings.append(f"{rel}:{line_no}:{name}")
+                break
+
+findings_file.write_text("\n".join(findings) + ("\n" if findings else ""), encoding="utf-8")
+sys.exit(1 if findings else 0)
+PY
+  scan_status=$?
+
+  if [ "$scan_status" -eq 0 ]; then
+    record_result "redact-check" "$skill_dir" "clean" "no sensitive content detected" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+    return 0
+  fi
+
+  findings=$(cat "$findings_file" 2>/dev/null || true)
+  first_finding=$(printf '%s' "$findings" | head -n 1)
+  detail="sensitive content detected"
+  if [ -n "$first_finding" ]; then
+    detail="$detail: $first_finding"
+  fi
+
+  if [ "$mode" = "warn" ]; then
+    record_result "redact-check" "$skill_dir" "warning" "$detail" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+    printf '[redact-check] %s warning %s\n' "$skill_dir" "$detail"
+    return 0
+  fi
+
+  record_result "redact-check" "$skill_dir" "failed" "$detail" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+  printf '[redact-check] %s failed %s\n' "$skill_dir" "$detail"
+  return 1
+}
+
 trim() {
   printf '%s' "$1" | awk '{ gsub(/^[[:space:]]+|[[:space:]]+$/, ""); print }'
 }
@@ -881,6 +988,15 @@ process_skill() {
   fi
 
   record_result "check" "$skill_dir" "validated" "skill metadata passed validation" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+
+  redact_mode=$(config_get "$config_path" defaults redact_mode "$SKILLUP_REDACT_MODE")
+  if ! run_redact_check "$skill_dir" "$redact_mode"; then
+    return 1
+  fi
+
+  if [ "$SKILLUP_MODE" = "redact-check" ]; then
+    return
+  fi
 
   OLD_IFS=$IFS
   IFS=','

@@ -2,6 +2,7 @@
 platforms = "github,xiaping,openclaw,clawhub"
 artifact_dir = ".skillup-artifacts"
 result_file = ".skillup-artifacts/publish-result.json"
+redact_mode = "strict"
 
 [github]
 token = ""
