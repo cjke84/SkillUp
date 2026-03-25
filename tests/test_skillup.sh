@@ -92,6 +92,8 @@ CHECK_LOG="$TMP_DIR/check.log"
 assert_contains "$CHECK_LOG" "[check]"
 assert_contains "$RESULT_JSON" "\"platform\": \"check\""
 assert_contains "$RESULT_JSON" "\"status\": \"validated\""
+assert_contains "$RESULT_JSON" "\"local_version\": \"1.2.3\""
+assert_contains "$RESULT_JSON" "\"blocking\": false"
 
 PUBLISH_LOG="$TMP_DIR/publish.log"
 "$ROOT_DIR/skills/SkillUp/scripts/publish.sh" publish \
@@ -251,6 +253,84 @@ IGNORED_SECRET_LOG="$TMP_DIR/ignored-secret.log"
   >"$IGNORED_SECRET_LOG" 2>&1
 
 assert_not_contains "$IGNORED_SECRET_LOG" "-> failed (sensitive content detected"
+
+INSTALL_HOME="$TMP_DIR/home"
+INSTALL_LOG="$TMP_DIR/install.log"
+HOME="$INSTALL_HOME" "$ROOT_DIR/skills/SkillUp/scripts/publish.sh" install-local both \
+  --source "$TEST_SKILL" \
+  >"$INSTALL_LOG" 2>&1
+
+assert_contains "$INSTALL_LOG" "install-local"
+assert_contains "$INSTALL_HOME/.codex/skills/test-skill/SKILL.md" "version: 1.2.3"
+assert_contains "$INSTALL_HOME/.openclaw/skills/test-skill/SKILL.md" "version: 1.2.3"
+
+ROLLBACK_SKILL="$TMP_DIR/skills/rollback-skill"
+make_skill "$ROLLBACK_SKILL" "version: 1.2.4"
+cat > "$ROLLBACK_SKILL/manifest.toml" <<'EOF'
+name = "rollback-skill"
+slug = "rollback-skill"
+version = "1.2.4"
+description = "rollback test"
+EOF
+
+ROLLBACK_RELEASE_DIR="$TMP_DIR/release-fixture/rollback-skill"
+mkdir -p "$ROLLBACK_RELEASE_DIR"
+cat > "$ROLLBACK_RELEASE_DIR/SKILL.md" <<'EOF'
+---
+name: rollback-skill
+description: rollback test
+version: 1.2.3
+---
+
+# rollback
+EOF
+cat > "$ROLLBACK_RELEASE_DIR/manifest.toml" <<'EOF'
+name = "rollback-skill"
+slug = "rollback-skill"
+version = "1.2.3"
+description = "rollback test"
+EOF
+(cd "$TMP_DIR/release-fixture" && zip -qr "$TMP_DIR/rollback-skill.zip" rollback-skill)
+
+FAKE_BIN="$TMP_DIR/bin"
+mkdir -p "$FAKE_BIN"
+cat > "$FAKE_BIN/gh" <<'EOF'
+#!/bin/sh
+set -eu
+if [ "$1" = "release" ] && [ "$2" = "download" ]; then
+  dir=""
+  pattern=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      --dir)
+        dir=$2
+        shift 2
+        ;;
+      --pattern)
+        pattern=$2
+        shift 2
+        ;;
+      *)
+        shift
+        ;;
+    esac
+  done
+  cp "$FAKE_GH_RELEASE_ZIP" "$dir/$pattern"
+  exit 0
+fi
+exit 1
+EOF
+chmod +x "$FAKE_BIN/gh"
+
+ROLLBACK_LOG="$TMP_DIR/rollback.log"
+PATH="$FAKE_BIN:$PATH" FAKE_GH_RELEASE_ZIP="$TMP_DIR/rollback-skill.zip" \
+  "$ROOT_DIR/skills/SkillUp/scripts/publish.sh" rollback 1.2.3 \
+  --source "$ROLLBACK_SKILL" \
+  >"$ROLLBACK_LOG" 2>&1
+
+assert_contains "$ROLLBACK_LOG" "rolled-back"
+assert_contains "$ROLLBACK_SKILL/SKILL.md" "version: 1.2.3"
+assert_contains "$ROLLBACK_SKILL/manifest.toml" "version = \"1.2.3\""
 
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - gh"
 assert_contains "$ROOT_DIR/skills/SkillUp/SKILL.md" "        - claw"

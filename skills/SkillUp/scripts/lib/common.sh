@@ -14,10 +14,13 @@ SKILLUP_RESULT_FILE=""
 SKILLUP_FAILED=0
 SKILLUP_CONTINUE_ON_ERROR=1
 SKILLUP_BUMP_PART=""
+SKILLUP_INSTALL_TARGET=""
+SKILLUP_ROLLBACK_VERSION=""
+SKILLUP_PARALLEL_PUBLISH=1
 
 usage() {
   cat <<'EOF'
-Usage: publish.sh [publish|check|package|bump|status|doctor|redact-check] --source <path> [options]
+Usage: publish.sh [publish|check|package|bump|status|doctor|redact-check|install-local|rollback] --source <path> [options]
 
 Modes:
   publish                Validate, package, and publish skills (default)
@@ -27,6 +30,8 @@ Modes:
   status                 Show local and remote publishing status
   doctor                 Check local environment readiness
   redact-check           Scan skill files for sensitive content before upload
+  install-local          Install local skill into codex/openclaw skill directories
+  rollback               Restore local skill files from a published GitHub release
 
 Options:
   --source <path>        Single skill directory or repository root
@@ -39,6 +44,8 @@ Options:
   --continue-on-error    Continue processing after failures
   --retry <n>            Retry failed publishes up to n additional times
   --redact-mode <mode>   strict, warn, off
+  --parallel-publish     Publish platforms concurrently when possible
+  --sequential-publish   Disable concurrent platform publishing
   --only-validate        Alias for check mode
   --only-package         Alias for package mode
   --help                 Show this message
@@ -66,6 +73,26 @@ main() {
           exit 1
         }
         SKILLUP_BUMP_PART=$1
+        shift
+        ;;
+      install-local)
+        SKILLUP_MODE=$1
+        shift
+        [ "$#" -gt 0 ] || {
+          echo "install-local requires codex, openclaw, or both" >&2
+          exit 1
+        }
+        SKILLUP_INSTALL_TARGET=$1
+        shift
+        ;;
+      rollback)
+        SKILLUP_MODE=$1
+        shift
+        [ "$#" -gt 0 ] || {
+          echo "rollback requires a version like 0.1.7" >&2
+          exit 1
+        }
+        SKILLUP_ROLLBACK_VERSION=$1
         shift
         ;;
     esac
@@ -114,6 +141,14 @@ main() {
       --redact-mode)
         SKILLUP_REDACT_MODE=$2
         shift 2
+        ;;
+      --parallel-publish)
+        SKILLUP_PARALLEL_PUBLISH=1
+        shift
+        ;;
+      --sequential-publish)
+        SKILLUP_PARALLEL_PUBLISH=0
+        shift
         ;;
       --only-validate)
         SKILLUP_MODE="check"
@@ -958,6 +993,254 @@ run_with_retries() {
   done
 }
 
+platform_blocking_status() {
+  status=$1
+  case "$status" in
+    failed|failed_platform_bug)
+      printf 'true\n'
+      ;;
+    *)
+      printf 'false\n'
+      ;;
+  esac
+}
+
+platform_adjusted_status() {
+  status=$1
+  detail=$2
+  case "$status" in
+    platform-version-adjusted)
+      printf 'true\n'
+      ;;
+    *)
+      case "$detail" in
+        *"platform adjusted version"*|*"auto-adjusted patch version"*)
+          printf 'true\n'
+          ;;
+        *)
+          printf 'false\n'
+          ;;
+      esac
+      ;;
+  esac
+}
+
+print_publish_diff_summary() {
+  skill_dir=$1
+  local_version=$2
+  summary=$(SKILLUP_RESULTS_DATA=$SKILLUP_RESULTS python3 - "$skill_dir" "$local_version" <<'PY'
+import os
+import sys
+
+skill_dir = sys.argv[1]
+rows = []
+for line in os.environ.get("SKILLUP_RESULTS_DATA", "").splitlines():
+    if not line.strip():
+        continue
+    parts = line.split("|")
+    parts += [""] * (8 - len(parts))
+    if parts[1] != skill_dir:
+        continue
+    if parts[0] not in {"github", "xiaping", "openclaw", "clawhub"}:
+        continue
+    rows.append(parts)
+
+parts_out = []
+for platform, _, status, detail, _, _, version, review_state in rows:
+    if status in {"in-sync"}:
+        action = "无变更"
+    elif status in {"platform-version-adjusted"}:
+        action = f"平台版本已前进到 {version or 'unknown'}"
+    elif status in {"out-of-sync"}:
+        action = f"将发布到 {platform}"
+    elif status in {"status-review"}:
+        action = "状态待确认"
+    elif status in {"status-unknown"}:
+        action = "远端状态未知"
+    else:
+        continue
+    label = {
+        "github": "GitHub",
+        "xiaping": "虾评",
+        "openclaw": "OpenClaw 中文社区",
+        "clawhub": "ClawHub",
+    }.get(platform, platform)
+    parts_out.append(f"{label}:{action}")
+
+print("，".join(parts_out))
+PY
+)
+  [ -n "$summary" ] || summary="未获取到平台差异"
+  record_result "publish-diff" "$skill_dir" "summary" "$summary" "" "$(skill_slug "$skill_dir")" "$local_version" ""
+  printf '[publish-diff] %s\n' "$summary"
+}
+
+run_platform_status_checks() {
+  skill_dir=$1
+  platforms_csv=$2
+  config_path=$3
+  local_version=$4
+
+  OLD_IFS=$IFS
+  IFS=','
+  for platform in $platforms_csv; do
+    IFS=$OLD_IFS
+    trimmed_platform=$(trim "$platform")
+    if [ -n "$trimmed_platform" ]; then
+      status_platform "$trimmed_platform" "$skill_dir" "$config_path" "$local_version" >/dev/null 2>&1 || true
+    fi
+    IFS=','
+  done
+  IFS=$OLD_IFS
+}
+
+run_publish_parallel() {
+  skill_dir=$1
+  platforms_csv=$2
+  artifact_path=$3
+  config_path=$4
+  dry_run=$5
+  skill_failed=0
+  worker_dir=$(mktemp -d "/tmp/skillup-publish.XXXXXX")
+
+  OLD_IFS=$IFS
+  IFS=','
+  index=0
+  for platform in $platforms_csv; do
+    IFS=$OLD_IFS
+    trimmed_platform=$(trim "$platform")
+    if [ -n "$trimmed_platform" ]; then
+      if ! platform_enabled_for_skill "$trimmed_platform" "$skill_dir"; then
+        record_result "$trimmed_platform" "$skill_dir" "skipped" "platform disabled in manifest" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+      else
+        result_file="$worker_dir/$index.results"
+        status_file="$worker_dir/$index.status"
+        (
+          SKILLUP_RESULTS=""
+          if run_with_retries "$trimmed_platform" "$skill_dir" "$artifact_path" "$config_path" "$dry_run"; then
+            printf '0\n' > "$status_file"
+          else
+            printf '1\n' > "$status_file"
+          fi
+          printf '%s' "$SKILLUP_RESULTS" > "$result_file"
+        ) &
+        eval "worker_pid_$index=$!"
+        eval "worker_result_$index='$result_file'"
+        eval "worker_status_$index='$status_file'"
+        index=$((index + 1))
+      fi
+    fi
+    IFS=','
+  done
+  IFS=$OLD_IFS
+
+  current=0
+  while [ "$current" -lt "$index" ]; do
+    eval "wait \$worker_pid_$current"
+    eval "result_file=\$worker_result_$current"
+    eval "status_file=\$worker_status_$current"
+    if [ -f "$result_file" ]; then
+      worker_results=$(cat "$result_file")
+      if [ -n "$worker_results" ]; then
+        SKILLUP_RESULTS="${SKILLUP_RESULTS}${worker_results}
+"
+      fi
+    fi
+    if [ -f "$status_file" ] && [ "$(cat "$status_file")" != "0" ]; then
+      skill_failed=1
+    fi
+    current=$((current + 1))
+  done
+
+  rm -rf "$worker_dir"
+  [ "$skill_failed" -eq 0 ]
+}
+
+install_local_skill() {
+  skill_dir=$1
+  install_target=$2
+  skill_name_local=$(basename "$skill_dir")
+  backup_root=$(mktemp -d "/tmp/skillup-install.XXXXXX")
+  installed_any=0
+
+  for target in $(printf '%s\n' "$install_target" | tr ',' ' '); do
+    case "$target" in
+      codex)
+        install_root="$HOME/.codex/skills"
+        ;;
+      openclaw)
+        install_root="$HOME/.openclaw/skills"
+        ;;
+      both)
+        for sub_target in codex openclaw; do
+          install_local_skill "$skill_dir" "$sub_target"
+        done
+        rm -rf "$backup_root"
+        return 0
+        ;;
+      *)
+        record_result "install-local" "$skill_dir" "failed" "unknown install target: $target" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
+        rm -rf "$backup_root"
+        return 1
+        ;;
+    esac
+
+    mkdir -p "$install_root"
+    destination="$install_root/$skill_name_local"
+    if [ -d "$destination" ]; then
+      mv "$destination" "$backup_root/${skill_name_local}.${target}.backup"
+    fi
+    cp -R "$skill_dir" "$destination"
+    record_result "install-local" "$skill_dir" "installed" "installed to $destination" "$destination" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" "$target"
+    installed_any=1
+  done
+
+  [ "$installed_any" -eq 1 ]
+}
+
+rollback_skill_from_github() {
+  skill_dir=$1
+  config_path=$2
+  rollback_version=$3
+
+  repo_name=$(config_get "$config_path" github repo "")
+  slug=$(skill_slug "$skill_dir")
+  tag="${slug}-v${rollback_version}"
+  [ -n "$repo_name" ] || {
+    record_result "rollback" "$skill_dir" "failed" "github.repo is required for rollback" "" "$slug" "$rollback_version" "github"
+    return 1
+  }
+  command_exists gh || {
+    record_result "rollback" "$skill_dir" "failed" "gh CLI is required for rollback" "" "$slug" "$rollback_version" "github"
+    return 1
+  }
+
+  rollback_dir=$(mktemp -d "/tmp/skillup-rollback.XXXXXX")
+  backup_dir=$(mktemp -d "/tmp/skillup-rollback-backup.XXXXXX")
+  artifact_pattern="${slug}.zip"
+
+  cp -R "$skill_dir" "$backup_dir/$(basename "$skill_dir")"
+  if ! gh release download "$tag" --repo "$repo_name" --pattern "$artifact_pattern" --dir "$rollback_dir" >/tmp/skillup-rollback.log 2>&1; then
+    record_result "rollback" "$skill_dir" "failed" "unable to download release asset for $tag" "" "$slug" "$rollback_version" "github"
+    rm -rf "$rollback_dir" "$backup_dir"
+    return 1
+  fi
+
+  rm -rf "$skill_dir"
+  mkdir -p "$(dirname "$skill_dir")"
+  if ! unzip -q "$rollback_dir/$artifact_pattern" -d "$rollback_dir/unpacked"; then
+    record_result "rollback" "$skill_dir" "failed" "unable to extract release asset for $tag" "" "$slug" "$rollback_version" "github"
+    rm -rf "$rollback_dir"
+    cp -R "$backup_dir/$(basename "$skill_dir")" "$skill_dir"
+    rm -rf "$backup_dir"
+    return 1
+  fi
+  mv "$rollback_dir/unpacked/$(basename "$skill_dir")" "$skill_dir"
+  record_result "rollback" "$skill_dir" "rolled-back" "restored local files from GitHub release $tag" "https://github.com/$repo_name/releases/tag/$tag" "$slug" "$rollback_version" "github"
+  rm -rf "$rollback_dir" "$backup_dir"
+  return 0
+}
+
 process_skill() {
   skill_dir=$1
   platforms_csv=$2
@@ -973,6 +1256,18 @@ process_skill() {
 
   if [ "$SKILLUP_MODE" = "doctor" ]; then
     run_doctor "$skill_dir"
+    return
+  fi
+
+  if [ "$SKILLUP_MODE" = "install-local" ]; then
+    validate_skill_metadata "$skill_dir"
+    install_local_skill "$skill_dir" "$SKILLUP_INSTALL_TARGET"
+    return
+  fi
+
+  if [ "$SKILLUP_MODE" = "rollback" ]; then
+    validate_skill_metadata "$skill_dir"
+    rollback_skill_from_github "$skill_dir" "$config_path" "$SKILLUP_ROLLBACK_VERSION"
     return
   fi
 
@@ -997,6 +1292,10 @@ process_skill() {
   if [ "$SKILLUP_MODE" = "redact-check" ]; then
     return
   fi
+
+  local_version=$(skill_version "$skill_dir")
+  run_platform_status_checks "$skill_dir" "$platforms_csv" "$config_path" "$local_version"
+  print_publish_diff_summary "$skill_dir" "$local_version"
 
   OLD_IFS=$IFS
   IFS=','
@@ -1033,28 +1332,34 @@ process_skill() {
     return
   fi
 
-  OLD_IFS=$IFS
-  IFS=','
-  for platform in $platforms_csv; do
-    IFS=$OLD_IFS
-    trimmed_platform=$(trim "$platform")
-    if [ -n "$trimmed_platform" ]; then
-      if ! platform_enabled_for_skill "$trimmed_platform" "$skill_dir"; then
-        record_result "$trimmed_platform" "$skill_dir" "skipped" "platform disabled in manifest" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
-        IFS=','
-        continue
-      fi
-      if ! run_with_retries "$trimmed_platform" "$skill_dir" "$artifact_path" "$config_path" "$dry_run"; then
-        skill_failed=1
-        if [ "$SKILLUP_FAIL_FAST" -eq 1 ]; then
+  if [ "$SKILLUP_PARALLEL_PUBLISH" -eq 1 ] && [ "$SKILLUP_FAIL_FAST" -eq 0 ]; then
+    if ! run_publish_parallel "$skill_dir" "$platforms_csv" "$artifact_path" "$config_path" "$dry_run"; then
+      skill_failed=1
+    fi
+  else
+    OLD_IFS=$IFS
+    IFS=','
+    for platform in $platforms_csv; do
+      IFS=$OLD_IFS
+      trimmed_platform=$(trim "$platform")
+      if [ -n "$trimmed_platform" ]; then
+        if ! platform_enabled_for_skill "$trimmed_platform" "$skill_dir"; then
+          record_result "$trimmed_platform" "$skill_dir" "skipped" "platform disabled in manifest" "" "$(skill_slug "$skill_dir")" "$(skill_version "$skill_dir")" ""
           IFS=','
-          break
+          continue
+        fi
+        if ! run_with_retries "$trimmed_platform" "$skill_dir" "$artifact_path" "$config_path" "$dry_run"; then
+          skill_failed=1
+          if [ "$SKILLUP_FAIL_FAST" -eq 1 ]; then
+            IFS=','
+            break
+          fi
         fi
       fi
-    fi
-    IFS=','
-  done
-  IFS=$OLD_IFS
+      IFS=','
+    done
+    IFS=$OLD_IFS
+  fi
 
   [ "$skill_failed" -eq 0 ]
 }
@@ -1190,6 +1495,27 @@ write_results_json() {
 import json
 import os
 import sys
+from pathlib import Path
+
+def local_version_for(skill_dir: str) -> str:
+    path = Path(skill_dir)
+    manifest = path / "manifest.toml"
+    if manifest.exists():
+        for line in manifest.read_text(encoding="utf-8").splitlines():
+            if line.startswith("version = "):
+                return line.split("=", 1)[1].strip().strip('"')
+    skill_md = path / "SKILL.md"
+    if skill_md.exists():
+        in_frontmatter = False
+        for idx, line in enumerate(skill_md.read_text(encoding="utf-8").splitlines()):
+            if idx == 0 and line == "---":
+                in_frontmatter = True
+                continue
+            if in_frontmatter and line == "---":
+                break
+            if in_frontmatter and line.startswith("version:"):
+                return line.split(":", 1)[1].strip()
+    return ""
 
 rows = []
 raw = os.environ.get("SKILLUP_RESULTS_DATA", "")
@@ -1198,15 +1524,28 @@ for line in raw.splitlines():
         continue
     parts = line.split("|")
     parts.extend([""] * (8 - len(parts)))
+    status = parts[2]
+    detail = parts[3]
+    version = parts[6]
+    local_version = local_version_for(parts[1]) if parts[1] else ""
+    remote_version = ""
+    if status in {"in-sync", "platform-version-adjusted", "status-review", "published", "rolled-back", "out-of-sync"}:
+        remote_version = version
+    platform_adjusted = status == "platform-version-adjusted" or "platform adjusted version" in detail or "auto-adjusted patch version" in detail
+    blocking = status in {"failed", "failed_platform_bug"}
     rows.append(
         {
             "platform": parts[0],
             "skill_dir": parts[1],
-            "status": parts[2],
-            "detail": parts[3],
+            "status": status,
+            "detail": detail,
             "url": parts[4],
             "id": parts[5],
-            "version": parts[6],
+            "version": version,
+            "local_version": local_version,
+            "remote_version": remote_version,
+            "platform_adjusted": platform_adjusted,
+            "blocking": blocking,
             "review_state": parts[7],
         }
     )

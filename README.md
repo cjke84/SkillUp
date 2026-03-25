@@ -43,12 +43,15 @@
 - 兼容标准 `SKILL.md` 结构，适用于 Codex 与 OpenClaw 中文社区一类智能体
 - 支持单个 skill 目录和多 skill 仓库
 - 提供 `check`、`package`、`publish`、`bump`、`status`、`doctor` 工作流
+- 提供 `redact-check`、`install-local`、`rollback` 工作流
 - 输出结构化 JSON 结果
 - 尽量使用非浏览器方式完成发布
 - 凭证优先读取环境变量，配置文件作为回退
 - 上传前做平台级校验
 - 支持通过 manifest 为不同平台开启或关闭发布
 - 支持发布生命周期管理和版本一致性检查
+- 发布前自动输出平台差异摘要
+- 在允许时并发发布多个平台
 
 如果你要把这个技能安装给智能体自己使用，建议放到默认技能目录：
 
@@ -73,9 +76,13 @@
 ./skills/SkillUp/scripts/publish.sh doctor --source ./skills/SkillUp
 ./skills/SkillUp/scripts/publish.sh status --source ./skills/SkillUp --platforms github,xiaping,openclaw,clawhub
 ./skills/SkillUp/scripts/publish.sh bump patch --source ./skills/SkillUp
+./skills/SkillUp/scripts/publish.sh redact-check --source ./skills/SkillUp
+./skills/SkillUp/scripts/publish.sh install-local both --source ./skills/SkillUp
+./skills/SkillUp/scripts/publish.sh rollback 0.1.7 --source ./skills/SkillUp
 ```
 
 默认会把机器可读结果写到 `.skillup-artifacts/publish-result.json`。
+结果中会包含 `local_version`、`remote_version`、`platform_adjusted`、`blocking` 等字段。
 
 平台开关：
 

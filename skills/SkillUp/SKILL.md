@@ -1,7 +1,7 @@
 ---
 name: SkillUp
 description: 当你要把一个技能目录或技能仓库发布到 GitHub、虾评 Skill、OpenClaw 中文社区或 ClawHub，并希望优先使用环境变量和非浏览器自动化时使用
-version: 0.1.8
+version: 0.1.9
 metadata:
   openclaw:
     requires:
@@ -51,7 +51,7 @@ metadata:
 统一入口：
 
 ```bash
-./skills/SkillUp/scripts/publish.sh [publish|check|package|redact-check] --source <path> [options]
+./skills/SkillUp/scripts/publish.sh [publish|check|package|redact-check|install-local|rollback] --source <path> [options]
 ```
 
 常用参数：
@@ -66,6 +66,8 @@ metadata:
 - `--continue-on-error`: keep going after failures
 - `--retry <n>`: retry failed publishes
 - `--redact-mode <mode>`: `strict`, `warn`, `off`
+- `--parallel-publish`: 并发发布多个平台
+- `--sequential-publish`: 禁用并发发布
 
 模式：
 
@@ -76,6 +78,8 @@ metadata:
 - `status`：查看本地版本和远端平台状态
 - `bump`：自动提升版本号
 - `redact-check`：上传前脱敏检查，扫描目录中的敏感信息
+- `install-local`：把当前 skill 安装到 `codex`、`openclaw` 或两者本地目录
+- `rollback`：从 GitHub release 还原本地 skill 文件到指定版本
 
 ## Credential Priority
 
@@ -125,10 +129,12 @@ metadata:
 
 1. 从给定 source 路径发现 skill
 2. 校验每个 skill 目录
-3. 打包生成 zip 产物
-4. 按要求尝试发布到各个平台
-5. 输出简洁的成功、跳过和失败摘要
-6. 把机器可读结果写入 `publish-result.json`
+3. 预先获取各平台远端状态并输出发布前差异摘要
+4. 打包生成 zip 产物
+5. 按要求尝试发布到各个平台
+6. 在允许时并发发布多个平台
+7. 输出简洁的成功、跳过和失败摘要
+8. 把机器可读结果写入 `publish-result.json`
 
 ## Examples
 
@@ -159,6 +165,22 @@ metadata:
   --source ./skills/SkillUp
 ```
 
+安装到本地智能体目录：
+
+```bash
+./skills/SkillUp/scripts/publish.sh \
+  install-local both \
+  --source ./skills/SkillUp
+```
+
+从 GitHub release 回滚本地文件：
+
+```bash
+./skills/SkillUp/scripts/publish.sh \
+  rollback 0.1.7 \
+  --source ./skills/SkillUp
+```
+
 使用配置文件发布整个 skills 仓库：
 
 ```bash
@@ -170,6 +192,7 @@ metadata:
 ## Notes
 
 - GitHub 发布支持把产物同步到目标仓库，并通过 `gh` 创建或更新 release
+- 发布结果 JSON 现在会同时写出 `local_version`、`remote_version`、`platform_adjusted`、`blocking`
 - 虾评在有 `SKILLUP_XIAPING_API_KEY` 或配置文件凭证时走 HTTP API
 - 虾评分类型会在可能的情况下通过实时分类 API 做校验
 - ClawHub 优先使用官方 `clawhub` CLI，失败后再考虑 HTTP 回退
